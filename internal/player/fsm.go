@@ -407,6 +407,7 @@ func (f *JukeboxFSM) transition(event Event, payload interface{}) (State, bool) 
 					f.demoMu.Unlock()
 				}
 			}
+			telemetry.IncrementSkipCount()
 			f.retryCounter = f.maxRetries
 			f.triggerPlayNext()
 			return StateTransitioning, true

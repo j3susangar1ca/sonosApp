@@ -123,6 +123,15 @@ func main() {
 	// 5. Initialize Jukebox FSM
 	fsm := player.NewJukeboxFSM(15, actionHandler)
 
+	// Wire telemetry dynamic Gauge callbacks
+	telemetry.QueueSizeFunc = func() float64 {
+		return float64(len(fsm.GetQueue()))
+	}
+	telemetry.ActiveUsersFunc = func() float64 {
+		return float64(len(fsm.GetActiveUsers()))
+	}
+	telemetry.RegisterGaugeFuncs()
+
 	// 6. Initialize WebSocket Hub
 	hub := ws.NewWebSocketHub(fsm)
 
