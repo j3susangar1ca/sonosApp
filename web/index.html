@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Office Jukebox - Premium Sonos Hub</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Deep Gradient Background -->
+    <div class="bg-gradient"></div>
+
+    <!-- Login/User Identity Modal Overlay -->
+    <div id="auth-overlay" class="overlay">
+        <div class="glass-card auth-card">
+            <h2>Acceso al Jukebox</h2>
+            <p>Ingresa tu nombre de usuario para participar en la democracia de reproducción de la oficina.</p>
+            <form id="auth-form">
+                <input type="text" id="username-input" placeholder="Nombre de usuario (ej. alice)" required autocomplete="off">
+                <button type="submit" class="btn btn-primary btn-glow">Conectar al Hub</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="app-container">
+        <!-- Header -->
+        <header class="glass-card header-card">
+            <div class="logo-area">
+                <div class="icon-glow">🔊</div>
+                <h1>Office Jukebox</h1>
+            </div>
+            <div class="status-area">
+                <div class="user-badge" id="current-user-badge">Invitado</div>
+                <div class="connection-status">
+                    <span class="status-led" id="status-led"></span>
+                    <span id="status-text">Desconectado</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Body Grid -->
+        <main class="grid-layout">
+            <!-- Left Column: Player & Controls -->
+            <section class="left-panel">
+                <!-- Now Playing Card -->
+                <div class="glass-card player-card">
+                    <div class="card-header">
+                        <span class="badge">Ahora Reproduciendo</span>
+                    </div>
+                    
+                    <div class="track-details-area">
+                        <div class="album-art-container">
+                            <div class="art-glow" id="art-glow"></div>
+                            <img src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=400&auto=format&fit=crop" alt="Album Art" id="track-thumbnail" class="album-art">
+                            <div class="waveform" id="waveform">
+                                <span></span><span></span><span></span><span></span><span></span>
+                            </div>
+                        </div>
+                        <div class="metadata">
+                            <h2 id="track-title">Ninguna pista activa</h2>
+                            <p id="track-user">Agrega una canción a la cola para iniciar la música</p>
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar -->
+                    <div class="progress-area">
+                        <div class="time-label" id="current-time">0:00</div>
+                        <div class="progress-bar-bg">
+                            <div class="progress-bar-fill" id="progress-bar"></div>
+                        </div>
+                        <div class="time-label" id="total-time">0:00</div>
+                    </div>
+
+                    <!-- Hardware Controls -->
+                    <div class="player-controls">
+                        <button class="btn btn-icon btn-secondary" id="btn-clear" title="Limpiar Cola">🗑️</button>
+                        <button class="btn btn-icon btn-secondary" id="btn-pause" title="Pausar">⏸️</button>
+                        <button class="btn btn-icon btn-secondary" id="btn-resume" title="Reanudar">▶️</button>
+                        <button class="btn btn-primary btn-glow btn-skip" id="btn-skip" title="Votar Skip">
+                            <span>Skip</span>
+                            <span class="skip-count-badge" id="skip-votes-count">0</span>
+                        </button>
+                    </div>
+
+                    <!-- Volume Slider -->
+                    <div class="volume-area">
+                        <span class="volume-icon">🔈</span>
+                        <input type="range" id="volume-slider" min="0" max="100" value="15" class="slider">
+                        <span class="volume-value" id="volume-value">15%</span>
+                    </div>
+                </div>
+
+                <!-- Add Track Card -->
+                <div class="glass-card add-card">
+                    <h3>Añadir Nueva Canción</h3>
+                    <form id="add-track-form">
+                        <div class="input-group">
+                            <input type="url" id="track-url" placeholder="URL de YouTube (ej. https://youtube.com/watch?...)" required autocomplete="off">
+                            <button type="submit" class="btn btn-primary btn-glow">Encolar</button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+
+            <!-- Right Column: Queue & Active Users -->
+            <section class="right-panel">
+                <!-- Session Users Card -->
+                <div class="glass-card users-card">
+                    <h3>Usuarios Activos</h3>
+                    <div class="users-list" id="active-users-list">
+                        <div class="no-data">Cargando usuarios...</div>
+                    </div>
+                </div>
+
+                <!-- Playback Queue Card -->
+                <div class="glass-card queue-card">
+                    <div class="queue-header">
+                        <h3>Siguiente en la Cola</h3>
+                        <span class="queue-size" id="queue-size">0 pistas</span>
+                    </div>
+                    <div class="queue-list" id="queue-tracks-list">
+                        <div class="no-data">La cola está vacía</div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
