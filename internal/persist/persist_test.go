@@ -1,12 +1,9 @@
 package persist
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
-	"time"
 
 	"github.com/jesuslangarica/sonosApp/internal/models"
 	"github.com/jesuslangarica/sonosApp/internal/player"
@@ -284,11 +281,6 @@ func TestConcurrentWriteDelta(t *testing.T) {
 		<-done
 	}
 
-	// Read log to verify we have entries
-	logData, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("failed to read log path: %v", err)
-	}
 
 	// Snapshot should be written if count exceeded maxDeltas, otherwise log contains goroutines * iterations.
 	// Since goroutines * iterations = 100, and maxDeltas is 50, it must have rotated.
