@@ -25,17 +25,11 @@ func TestHubRegisterAndBroadcast(t *testing.T) {
 	defer hub.Stop()
 
 	// Mock server
-	var wsConn *websocket.Conn
-	var wsMutex sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		
-		wsMutex.Lock()
-		wsConn = conn
-		wsMutex.Unlock()
 
 		// Build client
 		client := &Client{
