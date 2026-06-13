@@ -11,6 +11,7 @@ import (
 	"github.com/jesuslangarica/sonosApp/internal/models"
 	"github.com/jesuslangarica/sonosApp/internal/player"
 	"github.com/jesuslangarica/sonosApp/internal/streaming"
+	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 	"github.com/jesuslangarica/sonosApp/internal/ws"
 )
 
@@ -41,6 +42,7 @@ func NewRouter(
 	mux.HandleFunc("GET /api/queue", handleGetQueue(fsm))
 	mux.HandleFunc("GET /api/users", handleGetUsers(fsm))
 	mux.HandleFunc("GET /api/ws", handleWebSocket(hub))
+	mux.Handle("GET /metrics", telemetry.Handler())
 
 	// Local file streaming proxy mount
 	mux.HandleFunc("GET /stream", func(w http.ResponseWriter, r *http.Request) {
