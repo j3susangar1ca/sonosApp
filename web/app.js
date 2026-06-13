@@ -6,6 +6,7 @@ const processedEvents = new Set(); // For event deduplication (At-Least-Once del
 let trackTimer = null;
 let currentTrackSeconds = 0;
 let currentTrackDuration = 0;
+let currentZone = "default"; // Zona activa seleccionada por el usuario
 
 // DOM Elements
 const authOverlay = document.getElementById("auth-overlay");
@@ -35,6 +36,7 @@ const activeUsersList = document.getElementById("active-users-list");
 const queueTracksList = document.getElementById("queue-tracks-list");
 const queueSizeLabel = document.getElementById("queue-size");
 const skipVotesCount = document.getElementById("skip-votes-count");
+const zoneSelector = document.getElementById("zone-selector");
 
 // Buttons
 const btnClear = document.getElementById("btn-clear");
@@ -43,9 +45,20 @@ const btnResume = document.getElementById("btn-resume");
 const btnSkip = document.getElementById("btn-skip");
 
 // Initialize application on load
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
     // Check if user is already authenticated
     const savedUser = localStorage.getItem("jukebox_user");
+    const savedZone = localStorage.getItem("jukebox_zone");
+
+    // Load available zones from the server before anything else
+    await loadZonesFromServer();
+
+    // Restore previously selected zone if it still exists
+    if (savedZone && document.querySelector(`#zone-selector option[value="${savedZone}"]`)) {
+        currentZone = savedZone;
+        zoneSelector.value = currentZone;
+    }
+
     if (savedUser) {
         userID = savedUser;
         currentUserBadge.textContent = userID;
@@ -66,6 +79,54 @@ authForm.addEventListener("submit", (e) => {
     currentUserBadge.textContent = userID;
     authOverlay.classList.remove("active");
     connectWebSocket();
+});
+
+// Fetch available zones from the server and populate the zone selector
+async function loadZonesFromServer() {
+    try {
+        const res = await fetch("/api/zones");
+        if (res.ok) {
+            const zones = await res.json();
+            zoneSelector.innerHTML = ""; // Clear loading placeholder
+
+            if (!zones || zones.length === 0) {
+                const opt = document.createElement("option");
+                opt.value = "default";
+                opt.textContent = "Zona por defecto";
+                zoneSelector.appendChild(opt);
+                return;
+            }
+
+            zones.forEach((zone) => {
+                const opt = document.createElement("option");
+                opt.value = zone.id;
+                // Show zone id and state for visibility, e.g. "kitchen (playing)"
+                opt.textContent = `${zone.id} (${zone.state})`;
+                zoneSelector.appendChild(opt);
+            });
+
+            // If current zone no longer exists on server, reset to "default"
+            const availableIDs = zones.map((z) => z.id);
+            if (!availableIDs.includes(currentZone)) {
+                currentZone = availableIDs.includes("default") ? "default" : availableIDs[0];
+                zoneSelector.value = currentZone;
+            }
+        } else {
+            slog("error", "Failed to fetch zones from server", res.status);
+        }
+    } catch (err) {
+        slog("error", "Error fetching zones", err);
+    }
+}
+
+// Handle zone selector change: update current zone and reload UI data
+zoneSelector.addEventListener("change", (e) => {
+    currentZone = e.target.value;
+    localStorage.setItem("jukebox_zone", currentZone);
+    slog("info", "Zone changed to: " + currentZone);
+
+    // Reload queue and users for the new zone
+    loadQueueAndUsersFromServer();
 });
 
 // Establish WebSocket connection with auto-reconnect
@@ -133,7 +194,7 @@ function stopHeartbeat() {
     }
 }
 
-// WebSocket message router and event deduplicator
+// WebSocket message router with zone-aware filtering and event deduplicator
 function handleWebSocketMessage(data) {
     // Deduplicate event IDs to handle At-Least-Once delivery safely
     if (data.event_id) {
@@ -149,13 +210,24 @@ function handleWebSocketMessage(data) {
         }
     }
 
+    // Zone-aware filtering: only process events for the currently selected zone
+    const eventZone = data.zone_id || "default";
+    const isCurrentZone = eventZone === currentZone;
+
+    if (!isCurrentZone) {
+        slog("debug", `WebSocket event for zone '${eventZone}' discarded (current: '${currentZone}')`);
+        // Optional: Update a secondary background indicator for other zones
+        // (e.g., show a small notification badge or update a status bar)
+        return;
+    }
+
     slog("info", "WebSocket Event: " + data.event, data);
 
     switch (data.event) {
         case "state_change":
             updatePlayerState(data.new_state, data.current_track);
             syncVolume(data.volume);
-            fetchQueueAndUsers(); // Reload lists
+            loadQueueAndUsersFromServer(); // Reload lists for current zone
             break;
         case "volume_change":
             syncVolume(data.volume);
@@ -210,15 +282,15 @@ async function fetchQueueAndUsers() {
 // Real Fetch API implementers
 async function loadQueueAndUsersFromServer() {
     try {
-        // Fetch queue tracks
-        const qRes = await fetch("/api/queue");
+        // Fetch queue tracks for the current zone
+        const qRes = await fetch(`/api/queue?zone_id=${encodeURIComponent(currentZone)}`);
         if (qRes.ok) {
             const queue = await qRes.json();
             renderQueue(queue);
         }
 
-        // Fetch users & votes
-        const uRes = await fetch("/api/users");
+        // Fetch users & votes for the current zone
+        const uRes = await fetch(`/api/users?zone_id=${encodeURIComponent(currentZone)}`);
         if (uRes.ok) {
             const data = await uRes.json();
             renderUsersAndVotes(data.users, data.votes, data.karma);
@@ -384,7 +456,7 @@ addTrackForm.addEventListener("submit", async (e) => {
         const res = await fetch("/api/tracks", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: urlVal, user_id: userID })
+            body: JSON.stringify({ url: urlVal, user_id: userID, zone_id: currentZone })
         });
         if (res.ok) {
             trackUrlInput.value = "";
@@ -406,7 +478,7 @@ btnSkip.addEventListener("click", async () => {
         await fetch("/api/skip", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ user_id: userID })
+            body: JSON.stringify({ user_id: userID, zone_id: currentZone })
         });
     } catch (err) {
         slog("error", "Skip request failed", err);
@@ -415,15 +487,10 @@ btnSkip.addEventListener("click", async () => {
 
 btnPause.addEventListener("click", async () => {
     try {
-        // Encolar comando pausa vía API
-        const res = await fetch("/api/ws", { // wait, let's use the router HTTP POST skip/volume/etc.
-            // Oh, pause and resume can be triggered by calling clear, or we can use dedicated endpoints.
-            // Wait, does router.go have endpoints for pause/resume?
-            // No, router.go only has POST /api/tracks, POST /api/skip, POST /api/volume, POST /api/clear!
-            // Wait, so how do we pause or resume?
-            // Ah! We don't have endpoints for pause/resume in router.go.
-            // We should add them to router.go: `POST /api/pause` and `POST /api/resume`!
-            // Let's add them to the router so the UI can control playback pause/resume!
+        await fetch("/api/pause", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ zone_id: currentZone })
         });
     } catch (err) {
         slog("error", "Pause request failed", err);
@@ -432,15 +499,27 @@ btnPause.addEventListener("click", async () => {
 
 // Since we will modify router.go to add queue, users, pause, and resume endpoints, let's prepare the HTTP fetch requests:
 async function triggerPause() {
-    await fetch("/api/pause", { method: "POST" });
+    await fetch("/api/pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zone_id: currentZone })
+    });
 }
 
 async function triggerResume() {
-    await fetch("/api/resume", { method: "POST" });
+    await fetch("/api/resume", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zone_id: currentZone })
+    });
 }
 
 async function triggerClear() {
-    await fetch("/api/clear", { method: "POST" });
+    await fetch("/api/clear", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zone_id: currentZone })
+    });
 }
 
 btnPause.onclick = triggerPause;
@@ -462,7 +541,7 @@ volumeSlider.addEventListener("change", (e) => {
             await fetch("/api/volume", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ level: vol, user_id: userID })
+                body: JSON.stringify({ level: vol, user_id: userID, zone_id: currentZone })
             });
         } catch (err) {
             slog("error", "Volume change request failed", err);
