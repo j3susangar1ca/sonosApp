@@ -12,6 +12,7 @@ import (
 	"github.com/jesuslangarica/sonosApp/internal/models"
 	"github.com/jesuslangarica/sonosApp/internal/player"
 	"github.com/jesuslangarica/sonosApp/internal/streaming"
+	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 	"github.com/jesuslangarica/sonosApp/internal/ws"
 )
 

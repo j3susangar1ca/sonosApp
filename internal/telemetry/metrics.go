@@ -51,13 +51,13 @@ func init() {
 // Must be called after assigning QueueSizeFunc and ActiveUsersFunc.
 func RegisterGaugeFuncs() {
 	if QueueSizeFunc != nil {
-		prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "jukebox_queue_size",
 			Help: "Current size of the Jukebox play queue.",
 		}, QueueSizeFunc))
 	}
 	if ActiveUsersFunc != nil {
-		prometheus.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		_ = prometheus.Register(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 			Name: "jukebox_active_users",
 			Help: "Current number of connected active users.",
 		}, ActiveUsersFunc))
