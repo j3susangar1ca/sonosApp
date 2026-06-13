@@ -15,6 +15,18 @@ type Client struct {
 	Conn          *websocket.Conn
 	Send          chan []byte
 	LastHeartbeat time.Time
+	done          chan struct{} // Closed when the client is evicted or stopped to prevent goroutine leaks.
+}
+
+// NewClient initializes a Client with the required channel and metadata.
+func NewClient(id string, conn *websocket.Conn) *Client {
+	return &Client{
+		ID:            id,
+		Conn:          conn,
+		Send:          make(chan []byte, 256),
+		LastHeartbeat: time.Now(),
+		done:          make(chan struct{}),
+	}
 }
 
 // WebSocketHub handles the active connections, heartbeats, and parallel broadcasts.
@@ -45,9 +57,8 @@ func NewWebSocketHub(fsm *player.JukeboxFSM) *WebSocketHub {
 
 // Start runs the hub registration and heartbeat sweep workers.
 func (h *WebSocketHub) Start() {
-	h.wg.Add(1)
+	h.wg.Add(2)
 	go h.run()
-	h.wg.Add(1)
 	go h.heartbeatSweepLoop()
 }
 
@@ -74,8 +85,16 @@ func (h *WebSocketHub) Broadcast(msg []byte) {
 
 	for _, client := range h.clients {
 		go func(c *Client) {
+			doneChan := c.done
+			if doneChan == nil {
+				// Prevent blocking on nil channel if client was created without done
+				doneChan = make(chan struct{})
+			}
+
 			select {
 			case c.Send <- msg:
+			case <-doneChan:
+				// Client is disconnected/closed, ignore send.
 			case <-time.After(h.sendTimeout):
 				slog.Error("Failed to broadcast message to client (timeout / buffer full)", "user_id", c.ID)
 			}
@@ -159,16 +178,33 @@ func (h *WebSocketHub) sweepInactiveClients() {
 func (h *WebSocketHub) closeClient(c *Client) {
 	if _, ok := h.clients[c.ID]; ok {
 		delete(h.clients, c.ID)
-		close(c.Send)
-		c.Conn.Close()
+	}
+
+	if c.done != nil {
+		select {
+		case <-c.done:
+			// already closed
+		default:
+			close(c.done)
+		}
+	}
+
+	if c.Conn != nil {
+		_ = c.Conn.Close()
 	}
 }
 
 // writePump handles serialization and sends from the channel out to the WebSocket.
 func (c *Client) writePump(sendTimeout time.Duration) {
 	defer func() {
-		c.Conn.Close()
+		if c.Conn != nil {
+			_ = c.Conn.Close()
+		}
 	}()
+
+	if c.Conn == nil {
+		return
+	}
 
 	for {
 		select {
@@ -183,6 +219,8 @@ func (c *Client) writePump(sendTimeout time.Duration) {
 			if err != nil {
 				return
 			}
+		case <-c.done:
+			return
 		}
 	}
 }
@@ -191,8 +229,14 @@ func (c *Client) writePump(sendTimeout time.Duration) {
 func (c *Client) readPump(hub *WebSocketHub) {
 	defer func() {
 		hub.unregister <- c
-		c.Conn.Close()
+		if c.Conn != nil {
+			_ = c.Conn.Close()
+		}
 	}()
+
+	if c.Conn == nil {
+		return
+	}
 
 	c.Conn.SetReadLimit(512)
 

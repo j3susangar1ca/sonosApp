@@ -36,6 +36,7 @@ func TestHubRegisterAndBroadcast(t *testing.T) {
 			Conn:          conn,
 			Send:          make(chan []byte, 10),
 			LastHeartbeat: time.Now(),
+			done:          make(chan struct{}),
 		}
 		hub.register <- client
 	}))
@@ -89,6 +90,7 @@ func TestHubHeartbeatPruning(t *testing.T) {
 			Conn:          conn,
 			Send:          make(chan []byte, 10),
 			LastHeartbeat: time.Now(),
+			done:          make(chan struct{}),
 		}
 		hub.register <- client
 	}))
@@ -138,6 +140,7 @@ func TestHubHeartbeatUpdate(t *testing.T) {
 			Conn:          conn,
 			Send:          make(chan []byte, 10),
 			LastHeartbeat: time.Now(),
+			done:          make(chan struct{}),
 		}
 		hub.register <- client
 	}))
@@ -180,8 +183,8 @@ func TestBroadcastTimeout(t *testing.T) {
 	slowCh := make(chan []byte, 0) // blocks on send immediately if not reading
 
 	// Register fake clients directly to bypass network overhead
-	fastClient := &Client{ID: "fast", Send: fastCh}
-	slowClient := &Client{ID: "slow", Send: slowCh}
+	fastClient := &Client{ID: "fast", Send: fastCh, done: make(chan struct{})}
+	slowClient := &Client{ID: "slow", Send: slowCh, done: make(chan struct{})}
 
 	hub.mu.Lock()
 	hub.clients["fast"] = fastClient
@@ -211,7 +214,7 @@ func TestBroadcastTimeout(t *testing.T) {
 		if string(msg) != "data" {
 			t.Errorf("unexpected msg: %s", string(msg))
 		}
-	default:
-		t.Error("fast client did not receive broadcast")
+	case <-time.After(100 * time.Millisecond):
+		t.Error("fast client did not receive broadcast in time")
 	}
 }
