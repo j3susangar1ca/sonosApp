@@ -292,6 +292,28 @@ func subscribeEventBusWorkers(
 			eb.Ack(env.ID, "orchestrator_clear")
 		}
 	}()
+
+	// Worker 5: Pause Track Commands
+	chPause := make(chan models.Envelope, 100)
+	eb.Subscribe(models.ActionPause, "orchestrator_pause", chPause)
+	go func() {
+		for env := range chPause {
+			slog.Info("Processing pause command")
+			fsm.ProcessEvent(player.EventPause, nil)
+			eb.Ack(env.ID, "orchestrator_pause")
+		}
+	}()
+
+	// Worker 6: Resume Track Commands
+	chResume := make(chan models.Envelope, 100)
+	eb.Subscribe(models.ActionResume, "orchestrator_resume", chResume)
+	go func() {
+		for env := range chResume {
+			slog.Info("Processing resume command")
+			fsm.ProcessEvent(player.EventResume, nil)
+			eb.Ack(env.ID, "orchestrator_resume")
+		}
+	}()
 }
 
 func getEnv(key, fallback string) string {

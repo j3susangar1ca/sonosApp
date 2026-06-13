@@ -36,6 +36,10 @@ func NewRouter(
 	mux.HandleFunc("POST /api/skip", handleSkip(eb))
 	mux.HandleFunc("POST /api/volume", handleSetVolume(eb))
 	mux.HandleFunc("POST /api/clear", handleClearQueue(eb))
+	mux.HandleFunc("POST /api/pause", handlePause(eb))
+	mux.HandleFunc("POST /api/resume", handleResume(eb))
+	mux.HandleFunc("GET /api/queue", handleGetQueue(fsm))
+	mux.HandleFunc("GET /api/users", handleGetUsers(fsm))
 	mux.HandleFunc("GET /api/ws", handleWebSocket(hub))
 
 	// Local file streaming proxy mount
@@ -147,6 +151,62 @@ func handleClearQueue(eb *eventbus.EventBus) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+func handlePause(eb *eventbus.EventBus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cmd := models.Command{
+			Type:    models.ActionPause,
+			Payload: nil,
+		}
+
+		eb.Inject(cmd)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+func handleResume(eb *eventbus.EventBus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cmd := models.Command{
+			Type:    models.ActionResume,
+			Payload: nil,
+		}
+
+		eb.Inject(cmd)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+func handleGetQueue(fsm *player.JukeboxFSM) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		queue := fsm.GetQueue()
+		if queue == nil {
+			queue = make([]models.Track, 0)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(queue)
+	}
+}
+
+func handleGetUsers(fsm *player.JukeboxFSM) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		users := fsm.GetActiveUsers()
+		votes := fsm.GetVotes()
+		karma := fsm.GetKarma()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"users": users,
+			"votes": votes,
+			"karma": karma,
+		})
 	}
 }
 

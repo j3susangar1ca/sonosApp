@@ -192,4 +192,113 @@ func TestRouterEndpoints(t *testing.T) {
 			t.Error("timed out waiting for clear queue injection")
 		}
 	})
+
+	t.Run("Pause", func(t *testing.T) {
+		ch := make(chan models.Envelope, 1)
+		eb.Subscribe(models.ActionPause, "test-sub", ch)
+		defer eb.Unsubscribe(models.ActionPause, "test-sub")
+
+		req := httptest.NewRequest("POST", "/api/pause", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected status 202, got %d", w.Code)
+		}
+
+		select {
+		case env := <-ch:
+			eb.Ack(env.ID, "test-sub")
+		case <-time.After(100 * time.Millisecond):
+			t.Error("timed out waiting for pause injection")
+		}
+	})
+
+	t.Run("Resume", func(t *testing.T) {
+		ch := make(chan models.Envelope, 1)
+		eb.Subscribe(models.ActionResume, "test-sub", ch)
+		defer eb.Unsubscribe(models.ActionResume, "test-sub")
+
+		req := httptest.NewRequest("POST", "/api/resume", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected status 202, got %d", w.Code)
+		}
+
+		select {
+		case env := <-ch:
+			eb.Ack(env.ID, "test-sub")
+		case <-time.After(100 * time.Millisecond):
+			t.Error("timed out waiting for resume injection")
+		}
+	})
+
+	t.Run("GetQueue", func(t *testing.T) {
+		// Clear queue to start clean
+		fsm.ProcessEvent(player.EventClear, nil)
+
+		track1 := models.Track{ID: "track1"}
+		track2 := models.Track{ID: "track2"}
+		fsm.ProcessEvent(player.EventAdd, track1)
+		fsm.ProcessEvent(player.EventAdd, track2)
+
+		// Wait briefly for the asynchronous mock player transition to finish
+		time.Sleep(50 * time.Millisecond)
+
+		req := httptest.NewRequest("GET", "/api/queue", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		var queue []models.Track
+		if err := json.Unmarshal(w.Body.Bytes(), &queue); err != nil {
+			t.Fatalf("failed to unmarshal queue: %v", err)
+		}
+
+		// track1 should be dequeued playing, track2 should still be in queue
+		if len(queue) != 1 {
+			t.Fatalf("expected queue length of 1, got %d", len(queue))
+		}
+		if queue[0].ID != "track2" {
+			t.Errorf("expected track ID track2, got %s", queue[0].ID)
+		}
+	})
+
+	t.Run("GetUsers", func(t *testing.T) {
+		fsm.AddUser("charlie")
+		fsm.VoteSkip("charlie")
+
+		req := httptest.NewRequest("GET", "/api/users", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		var res struct {
+			Users map[string]bool    `json:"users"`
+			Votes map[string]bool    `json:"votes"`
+			Karma map[string]float64 `json:"karma"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Fatalf("failed to unmarshal users response: %v", err)
+		}
+
+		if !res.Users["charlie"] {
+			t.Error("expected user charlie to be active")
+		}
+		if !res.Votes["charlie"] {
+			t.Error("expected user charlie to have voted")
+		}
+	})
 }
