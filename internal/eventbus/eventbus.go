@@ -170,6 +170,7 @@ func (eb *EventBus) distributeCommand(cmd models.Command) {
 		Type:      cmd.Type,
 		Payload:   cmd.Payload,
 		Timestamp: time.Now(),
+		ZoneID:    cmd.ZoneID,
 	}
 
 	eb.mu.Lock()
