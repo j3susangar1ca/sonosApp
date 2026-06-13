@@ -107,10 +107,12 @@ func (p *Persister) WriteDelta(op DeltaOp, data interface{}, fsm *player.Jukebox
 
 	p.deltaCount++
 	shouldSnapshot := p.deltaCount >= p.maxDeltas
+	currentDeltas := p.deltaCount
+	maxDeltasCopy := p.maxDeltas
 	p.mu.Unlock()
 
 	if shouldSnapshot {
-		slog.Info("Max deltas threshold reached; generating state snapshot", "deltaCount", p.deltaCount, "maxDeltas", p.maxDeltas)
+		slog.Info("Max deltas threshold reached; generating state snapshot", "deltaCount", currentDeltas, "maxDeltas", maxDeltasCopy)
 		// ExportSnapshot acquires FSM's locks. Since we released p.mu, we adhere to the Lock hierarchy.
 		snap := fsm.ExportSnapshot()
 
