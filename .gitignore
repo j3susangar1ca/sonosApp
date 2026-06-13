@@ -1,0 +1,30 @@
+# Binaries and executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+sonosApp
+
+# Test coverage
+*.cover
+*.coverprofile
+coverage.txt
+
+# Common IDEs and editors
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+.DS_Store
+
+# SonosApp state persistence files
+state.log
+state.json
+*.tmp
