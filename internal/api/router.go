@@ -61,6 +61,17 @@ func NewRouter(
 		proxy.ServeHTTP(w, r)
 	})
 
+	// Serve static frontend files from web/ directory
+	webFS := http.Dir("web")
+	fileServer := http.FileServer(webFS)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Serve index.html for root path
+		if r.URL.Path == "/" || r.URL.Path == "" {
+			r.URL.Path = "/index.html"
+		}
+		fileServer.ServeHTTP(w, r)
+	})
+
 	return mux
 }
 
