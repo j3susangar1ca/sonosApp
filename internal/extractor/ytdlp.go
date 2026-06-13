@@ -65,6 +65,14 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	// Measure yt-dlp execution latency for telemetry observability.
+	// This captures the real wall-clock time of the OS process invocation,
+	// regardless of whether the caller uses the WorkerPool or calls ResolveURL directly.
+	startTime := time.Now()
+	defer func() {
+		telemetry.ObserveYoutubeLatency(time.Since(startTime).Seconds())
+	}()
+
 	err = cmd.Run()
 	if err != nil {
 		return models.Track{}, fmt.Errorf("yt-dlp execution failed: %w (stderr: %s)", err, stderr.String())

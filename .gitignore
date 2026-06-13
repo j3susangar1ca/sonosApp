@@ -1,26 +1,28 @@
-```gitignore
-# Compiled and build artifacts
-*.pyc
-__pycache__/
-*.o
+```
+# Dependencies
+vendor/
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.a
 *.obj
+*.out
+
+# Build artifacts
+bin/
 dist/
 build/
 target/
 
-# Dependencies
-node_modules/
-venv/
-.venv/
+# Logs
+*.log
+
+# Environment
 .env
 .env.local
-.env.*
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-*.swo
+*.env.*
 
 # Editors
 .vscode/
@@ -28,7 +30,7 @@ venv/
 *.swp
 *.swo
 
-# System files
+# OS
 .DS_Store
 Thumbs.db
 
@@ -37,21 +39,27 @@ coverage/
 htmlcov/
 .coverage
 
-# Python specific
-*.pyc
+# Python (if present in Go project)
 __pycache__/
-.pytest_cache/
-.mypy_cache/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
 
-# Node.js specific
+# Node (if present in Go project)
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Build outputs
-dist/
-build/
-*.min.js
-*.min.css
+# Virtual environments (if present in Go project)
+venv/
+.venv/
+env/
+.env/
+
+# Go specific
+*.test
+*.prof
 ```

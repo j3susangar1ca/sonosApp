@@ -1,6 +1,6 @@
 module github.com/jesuslangarica/sonosApp
 
-go 1.26.4
+go 1.19
 
 require (
 	github.com/gorilla/websocket v1.5.3
