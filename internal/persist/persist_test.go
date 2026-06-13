@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jesuslangarica/sonosApp/internal/models"
 	"github.com/jesuslangarica/sonosApp/internal/player"
@@ -16,6 +17,21 @@ func (m *MockActionHandler) PlayTrack(track models.Track, volume int) error { re
 func (m *MockActionHandler) PauseTrack() error                            { return nil }
 func (m *MockActionHandler) ResumeTrack() error                           { return nil }
 func (m *MockActionHandler) SetVolume(volume int) error                   { return nil }
+
+// blockingActionHandler allows blocking PlayTrack execution to control transitioning states.
+type blockingActionHandler struct {
+	playCalled chan struct{}
+	proceed    chan struct{}
+}
+
+func (b *blockingActionHandler) PlayTrack(track models.Track, volume int) error {
+	b.playCalled <- struct{}{}
+	<-b.proceed
+	return nil
+}
+func (b *blockingActionHandler) PauseTrack() error          { return nil }
+func (b *blockingActionHandler) ResumeTrack() error         { return nil }
+func (b *blockingActionHandler) SetVolume(volume int) error { return nil }
 
 func TestWriteDeltaAndRestore(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "persist-test-*")
@@ -30,7 +46,10 @@ func TestWriteDeltaAndRestore(t *testing.T) {
 	p := NewPersister(logPath, snapPath)
 	p.SetMaxDeltas(100) // high threshold to prevent early snapshot
 
-	handler := &MockActionHandler{}
+	handler := &blockingActionHandler{
+		playCalled: make(chan struct{}, 10),
+		proceed:    make(chan struct{}, 10),
+	}
 	fsm := player.NewJukeboxFSM(15, handler)
 
 	// Simulate some activity on the FSM
@@ -54,6 +73,15 @@ func TestWriteDeltaAndRestore(t *testing.T) {
 	if err := p.WriteDelta(OpAppend, track1, fsm); err != nil {
 		t.Fatalf("failed to write delta: %v", err)
 	}
+	// Wait for PlayTrack to start and block, then proceed
+	<-handler.playCalled
+	handler.proceed <- struct{}{}
+	time.Sleep(20 * time.Millisecond) // Let EventAckOk finish
+
+	// Track 1 is dequeued and starts playing
+	if err := p.WriteDelta(OpDequeue, nil, fsm); err != nil {
+		t.Fatalf("failed to write delta: %v", err)
+	}
 
 	// 2. Append Track 2
 	fsm.ProcessEvent(player.EventAdd, track2)
@@ -67,15 +95,18 @@ func TestWriteDeltaAndRestore(t *testing.T) {
 		t.Fatalf("failed to write delta: %v", err)
 	}
 
-	// 4. Simulate Dequeue (EventAckOk starts playing first item)
-	fsm.ProcessEvent(player.EventAckOk, nil)
-	if err := p.WriteDelta(OpDequeue, nil, fsm); err != nil {
-		t.Fatalf("failed to write delta: %v", err)
-	}
-
-	// 5. Simulate Skip
+	// 4. Simulate Skip
 	fsm.ProcessEvent(player.EventSkip, nil)
 	if err := p.WriteDelta(OpSkip, nil, fsm); err != nil {
+		t.Fatalf("failed to write delta: %v", err)
+	}
+	// Wait for next track to start play and proceed
+	<-handler.playCalled
+	handler.proceed <- struct{}{}
+	time.Sleep(20 * time.Millisecond) // Let EventAckOk finish
+
+	// Track 2 is dequeued and starts playing
+	if err := p.WriteDelta(OpDequeue, nil, fsm); err != nil {
 		t.Fatalf("failed to write delta: %v", err)
 	}
 
