@@ -1,23 +1,27 @@
 ```
 # Dependencies
-vendor/
+go.mod
+go.sum
 
-# Compiled binaries
-*.exe
-*.dll
-*.so
-*.a
+# Compiled and build artifacts
+*.o
 *.obj
 *.out
+*.a
+*.so
+*.dll
+*.dylib
 
-# Build artifacts
+# Go-specific build artifacts
 bin/
-dist/
-build/
-target/
+pkg/
+*.test
+*.prof
 
-# Logs
+# Logs and temp files
 *.log
+*.tmp
+*.swp
 
 # Environment
 .env
@@ -30,7 +34,7 @@ target/
 *.swp
 *.swo
 
-# OS
+# OS generated files
 .DS_Store
 Thumbs.db
 
@@ -39,27 +43,8 @@ coverage/
 htmlcov/
 .coverage
 
-# Python (if present in Go project)
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-*.so
-
-# Node (if present in Go project)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Virtual environments (if present in Go project)
-venv/
-.venv/
-env/
-.env/
-
-# Go specific
-*.test
-*.prof
+# Build outputs
+dist/
+build/
+target/
 ```
