@@ -21,6 +21,7 @@ import (
 	"github.com/jesuslangarica/sonosApp/internal/persist"
 	"github.com/jesuslangarica/sonosApp/internal/player"
 	"github.com/jesuslangarica/sonosApp/internal/streaming"
+	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 	"github.com/jesuslangarica/sonosApp/internal/ws"
 )
 
@@ -37,6 +38,7 @@ func (o *OrchestratorFSMObserver) OnStateChange(oldState, newState player.State,
 	if oldState == player.StateTransitioning && newState == player.StatePlaying {
 		slog.Info("Track successfully dequeued, writing persistence record")
 		_ = o.persister.WriteDelta(persist.OpDequeue, nil, o.fsm)
+		telemetry.IncrementPlayCount()
 	}
 
 	// 2. Broadcast Jukebox FSM state update to all active WebSocket connections.

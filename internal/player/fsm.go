@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jesuslangarica/sonosApp/internal/models"
+	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 )
 
 // State represents the state of the FSM.
