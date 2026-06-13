@@ -73,6 +73,7 @@ type Envelope struct {
 	Type      EventType   `json:"type"`
 	Payload   interface{} `json:"payload"`
 	Timestamp time.Time   `json:"timestamp"`
+	ZoneID    string      `json:"zone_id,omitempty"`
 }
 
 // CalendarEventType represents the type of calendar event (§15).
