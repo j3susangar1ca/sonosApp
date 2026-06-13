@@ -64,7 +64,8 @@ func ExtractExpiry(streamURL string) time.Time {
 }
 
 // Get retrieves a track from cache.
-// If expired, or if passive HTTP HEAD validation fails, the entry is evicted.
+// If expired, the entry is evicted immediately.
+// HTTP HEAD validation is performed asynchronously in background.
 func (c *LRUCache) Get(key string) (models.Track, bool) {
 	c.mu.Lock()
 	elem, exists := c.items[key]
@@ -89,18 +90,20 @@ func (c *LRUCache) Get(key string) (models.Track, bool) {
 	streamURL := track.URL
 	c.mu.Unlock()
 
-	// Passive check (HEAD request) executed OUTSIDE the lock to avoid blocking other concurrent reads/writes
-	if !c.validateStreamURL(streamURL) {
-		c.mu.Lock()
-		// Double-checked verification to prevent race condition when a write updated the key in the meantime
-		if currentElem, stillExists := c.items[key]; stillExists && currentElem == elem {
-			c.list.Remove(currentElem)
-			delete(c.items, key)
-			slog.Info("LRU Cache entry evicted due to failed HEAD validation", "key", key)
+	// Passive check (HEAD request) executed ASYNC in background
+	// Return cached value immediately; if validation fails, remove entry for next call
+	go func(url, k string) {
+		if !c.validateStreamURL(url) {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			// Double-checked verification to prevent race condition
+			if currentElem, stillExists := c.items[k]; stillExists && currentElem == elem {
+				c.list.Remove(currentElem)
+				delete(c.items, k)
+				slog.Info("LRU Cache entry evicted due to failed HEAD validation", "key", k)
+			}
 		}
-		c.mu.Unlock()
-		return models.Track{}, false
-	}
+	}(streamURL, key)
 
 	return track, true
 }

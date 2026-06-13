@@ -117,13 +117,7 @@ func (eb *EventBus) Stop() {
 		delete(eb.deliveries, key)
 	}
 
-	// Safely close chIn
-	select {
-	case <-eb.chIn:
-		// already closed
-	default:
-		close(eb.chIn)
-	}
+	close(eb.chIn) // Cerrar directamente; distributeLoop saldra por !ok
 	slog.Info("EventBus stopped")
 }
 
