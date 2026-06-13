@@ -100,6 +100,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 	defer cb.mu.Unlock()
 
 	cb.failureCount++
+	telemetry.IncrementCircuitBreakerFailures()
 	slog.Warn("Circuit Breaker registered failure", "consecutive_failures", cb.failureCount, "max_failures", cb.maxFailures, "current_state", cb.state.String())
 
 	if cb.state == CBClosed && cb.failureCount >= cb.maxFailures {
@@ -289,7 +290,11 @@ func (s *SonosPlayer) postSOAPRaw(ctx context.Context, service string, action st
 	req.Header.Set("Content-Type", `text/xml; charset="utf-8"`)
 	req.Header.Set("SOAPACTION", fmt.Sprintf("urn:schemas-upnp-org:service:%s:1#%s", service, action))
 
+	startTime := time.Now()
 	resp, err := s.client.Do(req)
+	duration := time.Since(startTime).Seconds()
+	telemetry.ObserveSonosLatency(duration)
+
 	if err != nil {
 		return err
 	}
