@@ -63,7 +63,6 @@ func NewRouter(
 
 	// Serve static frontend files from web/ directory
 	webFS := http.Dir("web")
-	fileServer := http.FileServer(webFS)
 	mux.Handle("/", http.FileServer(webFS))
 
 	return mux
