@@ -158,9 +158,13 @@ func (p *Persister) writeSnapshotLocked(snap player.JukeboxStateSnapshot) error 
 		return fmt.Errorf("failed to rename snapshot file: %w", err)
 	}
 
-	// Truncate the log file to 0 bytes.
-	if err := os.Truncate(p.logPath, 0); err != nil {
-		return fmt.Errorf("failed to truncate log file: %w", err)
+	// Truncate the log file to 0 bytes if it exists.
+	if _, err := os.Stat(p.logPath); err == nil {
+		if err := os.Truncate(p.logPath, 0); err != nil {
+			return fmt.Errorf("failed to truncate log file: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("failed to stat log file: %w", err)
 	}
 
 	p.deltaCount = 0
