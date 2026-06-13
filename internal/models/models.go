@@ -72,3 +72,22 @@ type Envelope struct {
 	Timestamp time.Time   `json:"timestamp"`
 }
 
+// CalendarEventType represents the type of calendar event (§15).
+type CalendarEventType string
+
+const (
+	// CalendarMeetingStart signals the beginning of a meeting, triggering ActionPause.
+	CalendarMeetingStart CalendarEventType = "meeting_start"
+	// CalendarMeetingEnd signals the end of a meeting, triggering ActionResume.
+	CalendarMeetingEnd CalendarEventType = "meeting_end"
+)
+
+// CalendarWebhookPayload represents the incoming calendar webhook body (§15.3).
+// ZoneID is pre-wired for multi-zone support (§20).
+type CalendarWebhookPayload struct {
+	EventType CalendarEventType `json:"event_type"`
+	Title     string            `json:"title,omitempty"`
+	Timestamp time.Time         `json:"timestamp"`
+	ZoneID    string            `json:"zone_id,omitempty"`
+}
+
