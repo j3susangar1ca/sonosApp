@@ -19,6 +19,13 @@ import (
 func TestRouterEndpoints(t *testing.T) {
 	// Initialize subsystems
 	fsm := player.NewJukeboxFSM(15, nil)
+	telemetry.QueueSizeFunc = func() float64 {
+		return float64(len(fsm.GetQueue()))
+	}
+	telemetry.ActiveUsersFunc = func() float64 {
+		return float64(len(fsm.GetActiveUsers()))
+	}
+	telemetry.RegisterGaugeFuncs()
 	eb := eventbus.NewEventBus(10, 50*time.Millisecond)
 	defer eb.Stop()
 
@@ -304,6 +311,33 @@ func TestRouterEndpoints(t *testing.T) {
 		}
 		if res.Votes["alice"] {
 			t.Error("expected user alice to not have voted")
+		}
+	})
+
+	t.Run("GetMetrics", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/metrics", nil)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		expectedMetrics := []string{
+			"jukebox_queue_size",
+			"jukebox_active_users",
+			"jukebox_play_count_total",
+			"jukebox_skip_count_total",
+			"jukebox_cb_f_total",
+			"jukebox_youtube_resolution_latency_seconds",
+			"jukebox_sonos_soap_latency_seconds",
+		}
+
+		for _, m := range expectedMetrics {
+			if !bytes.Contains(w.Body.Bytes(), []byte(m)) {
+				t.Errorf("expected metric %s to be present in metrics output", m)
+			}
 		}
 	})
 }
