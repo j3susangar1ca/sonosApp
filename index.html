@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Office Jukebox</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- ── AUTH OVERLAY ────────────────────────────────────────────── -->
+<div id="auth-overlay" class="overlay">
+    <div class="auth-card">
+        <div class="auth-logo">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path d="M9 18V5l12-2v13" stroke="url(#authGrad)" stroke-width="2.2"
+                      stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="6"  cy="18" r="3" fill="url(#authGrad)" opacity="0.85"/>
+                <circle cx="18" cy="16" r="3" fill="url(#authGrad)" opacity="0.5"/>
+                <defs>
+                    <linearGradient id="authGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%"   stop-color="#007AFF"/>
+                        <stop offset="100%" stop-color="#AF52DE"/>
+                    </linearGradient>
+                </defs>
+            </svg>
+        </div>
+        <h2>Office Jukebox</h2>
+        <p>Controla la música de la oficina.<br>Entra con tu nombre para participar.</p>
+        <form id="auth-form">
+            <input type="text" id="username-input" placeholder="Tu nombre de usuario..." required autocomplete="off">
+            <button type="submit" class="btn-primary-full">
+                Conectar al hub
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- ── HEADER ─────────────────────────────────────────────────── -->
+<header class="app-header">
+    <div class="header-inner">
+
+        <div class="header-left">
+            <div class="header-logo-mark">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 18V5l12-2v13" stroke="white" stroke-width="2.2"
+                          stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="6"  cy="18" r="2.5" fill="white" opacity="0.8"/>
+                    <circle cx="18" cy="16" r="2.5" fill="white" opacity="0.55"/>
+                </svg>
+            </div>
+            <span class="header-wordmark">Jukebox</span>
+        </div>
+
+        <div class="header-center">
+            <div class="zone-control">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"
+                          stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                </svg>
+                <select id="zone-selector" class="zone-selector">
+                    <option value="default">Cargando zonas...</option>
+                </select>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+                    <polyline points="6 9 12 15 18 9" stroke="currentColor"
+                              stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+        </div>
+
+        <div class="header-right">
+            <div class="user-chip">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                    <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"
+                          stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    <circle cx="12" cy="7" r="4" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                <span id="current-user-badge">Invitado</span>
+            </div>
+            <div class="status-pill">
+                <span class="status-led" id="status-led"></span>
+                <span class="status-label" id="status-text">Desconectado</span>
+            </div>
+        </div>
+
+    </div>
+</header>
+
+<!-- ── APP BODY ───────────────────────────────────────────────── -->
+<div class="app-container">
+    <main class="main-grid">
+
+        <!-- ═══ LEFT PANEL ═══════════════════════════════════════ -->
+        <section class="left-col">
+
+            <!-- PLAYER CARD -->
+            <div class="card player-card">
+
+                <!-- Now Playing pill -->
+                <div class="np-badge">
+                    <span class="np-dot" id="np-dot"></span>
+                    <span class="np-label-text">Ahora reproduciendo</span>
+                </div>
+
+                <!-- Album + Track Info -->
+                <div class="player-body">
+                    <div class="album-outer">
+                        <!-- Ambient glow - opacity controlled by app.js -->
+                        <div class="art-ambient" id="art-glow"></div>
+                        <div class="album-frame">
+                            <img id="track-thumbnail" class="album-img"
+                                 src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=400&auto=format&fit=crop"
+                                 alt="Album art">
+                            <!-- Waveform overlay - .active added by app.js when playing -->
+                            <div class="waveform" id="waveform">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="track-meta">
+                        <h2 class="track-title" id="track-title">Sin pista activa</h2>
+                        <p  class="track-sub"   id="track-user">Añade una canción para comenzar</p>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div class="progress-section">
+                    <div class="progress-rail">
+                        <!-- id="progress-bar" & class="progress-bar-fill" both required by app.js -->
+                        <div class="progress-bar-fill" id="progress-bar"></div>
+                    </div>
+                    <div class="time-row">
+                        <span id="current-time">0:00</span>
+                        <span id="total-time">0:00</span>
+                    </div>
+                </div>
+
+                <!-- Playback controls -->
+                <div class="player-controls">
+                    <button class="ctrl-btn" id="btn-clear" title="Limpiar cola">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2"/>
+                        </svg>
+                    </button>
+                    <button class="ctrl-btn" id="btn-pause" title="Pausar">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                            <rect x="6"  y="4" width="4" height="16" rx="1.5"/>
+                            <rect x="14" y="4" width="4" height="16" rx="1.5"/>
+                        </svg>
+                    </button>
+                    <button class="ctrl-btn" id="btn-resume" title="Reanudar">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                    </button>
+                    <button class="skip-btn" id="btn-skip">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                            <polygon points="5 4 15 12 5 20 5 4"/>
+                            <rect x="17" y="4" width="2.5" height="16" rx="1.25"/>
+                        </svg>
+                        <span>Skip</span>
+                        <!-- .skip-count-badge & id="skip-votes-count" required by app.js -->
+                        <span class="skip-count-badge" id="skip-votes-count">0</span>
+                    </button>
+                </div>
+
+                <!-- Volume -->
+                <div class="volume-row">
+                    <svg class="vol-icon" width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    </svg>
+                    <input type="range" id="volume-slider" class="vol-range" min="0" max="100" value="15">
+                    <svg class="vol-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" stroke="none"/>
+                        <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                        <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                    </svg>
+                    <span id="volume-value" class="vol-label">15%</span>
+                </div>
+            </div>
+
+            <!-- ADD TRACK CARD -->
+            <div class="card add-card">
+                <p class="eyebrow">Añadir canción</p>
+                <form id="add-track-form" class="add-form">
+                    <input type="url" id="track-url" class="url-input"
+                           placeholder="Pega una URL de YouTube..." required autocomplete="off">
+                    <button type="submit" class="btn-enqueue">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2.5" stroke-linecap="round">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5"  y1="12" x2="19" y2="12"/>
+                        </svg>
+                        Encolar
+                    </button>
+                </form>
+            </div>
+
+        </section>
+
+        <!-- ═══ RIGHT PANEL ══════════════════════════════════════ -->
+        <section class="right-col">
+
+            <!-- ACTIVE USERS CARD -->
+            <div class="card users-card">
+                <p class="eyebrow">Usuarios activos</p>
+                <div class="users-list" id="active-users-list">
+                    <span class="no-data">Cargando usuarios...</span>
+                </div>
+            </div>
+
+            <!-- QUEUE CARD -->
+            <div class="card queue-card">
+                <div class="queue-header">
+                    <p class="eyebrow" style="margin-bottom:0">En cola</p>
+                    <span class="queue-size-badge" id="queue-size">0 pistas</span>
+                </div>
+                <div class="queue-list" id="queue-tracks-list">
+                    <div class="no-data">La cola está vacía</div>
+                </div>
+            </div>
+
+        </section>
+    </main>
+</div>
+
+<script src="app.js"></script>
+
+<!-- ── VOLUME FILL ENHANCER (no conflict with app.js) ─────────── -->
+<script>
+;(function() {
+    var s = document.getElementById('volume-slider');
+    if (!s) return;
+    function fill() {
+        var pct = ((parseInt(s.value, 10) || 0)) + '%';
+        s.style.background = 'linear-gradient(to right,#007AFF ' + pct + ',rgba(0,0,0,0.08) ' + pct + ')';
+    }
+    fill();
+    s.addEventListener('input', fill);
+    // Keep in sync with WebSocket-driven volume changes
+    setInterval(fill, 250);
+})();
+</script>
+
+</body>
+</html>
