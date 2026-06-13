@@ -5,14 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"github.com/jesuslangarica/sonosApp/internal/models"
 	"github.com/jesuslangarica/sonosApp/internal/player"
 )
 

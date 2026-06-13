@@ -160,18 +160,36 @@ func TestFSMTransitions(t *testing.T) {
 	}
 }
 
+// blockingActionHandler allows blocking PlayTrack execution to test transitioning states.
+type blockingActionHandler struct {
+	playCalled chan struct{}
+	proceed    chan struct{}
+}
+
+func (b *blockingActionHandler) PlayTrack(track models.Track, volume int) error {
+	close(b.playCalled)
+	<-b.proceed
+	return nil
+}
+func (b *blockingActionHandler) PauseTrack() error          { return nil }
+func (b *blockingActionHandler) ResumeTrack() error         { return nil }
+func (b *blockingActionHandler) SetVolume(volume int) error { return nil }
+
 // TestFSMDeferredCmds validates buffering and flushing of user commands during StateTransitioning.
 func TestFSMDeferredCmds(t *testing.T) {
-	handler := &mockActionHandler{}
+	handler := &blockingActionHandler{
+		playCalled: make(chan struct{}),
+		proceed:    make(chan struct{}),
+	}
 	fsm := NewJukeboxFSM(10, handler)
 
-	// Force state to Transitioning by putting it manually or enqueuing and not immediately ACK'ing.
-	// Let's trigger Add. State will be StateTransitioning. We do NOT wait, but immediately send EventPause.
 	track := models.Track{ID: "track1"}
 	fsm.ProcessEvent(EventAdd, track)
 
-	// Since we haven't processed EventAckOk yet, state is StateTransitioning.
-	// Let's send a user event (e_pause).
+	// Wait for PlayTrack to be called and block
+	<-handler.playCalled
+
+	// Now state is guaranteed to be StateTransitioning
 	fsm.ProcessEvent(EventPause, nil)
 
 	state, _, _ := fsm.GetState()
@@ -179,9 +197,11 @@ func TestFSMDeferredCmds(t *testing.T) {
 		t.Errorf("expected state to remain Transitioning, got %s", state.String())
 	}
 
-	// Now ACK the transition. It should transition to StatePlaying and then immediately flush the deferred EventPause, going to StatePaused!
-	fsm.ProcessEvent(EventAckOk, nil)
-	time.Sleep(10 * time.Millisecond)
+	// Tell PlayTrack to finish. This will trigger EventAckOk in background goroutine
+	close(handler.proceed)
+
+	// Wait a bit for the transition and flush to complete
+	time.Sleep(20 * time.Millisecond)
 
 	state, _, _ = fsm.GetState()
 	if state != StatePaused {
