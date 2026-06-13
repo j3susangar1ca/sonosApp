@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jesuslangarica/sonosApp/internal/models"
+	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 )
 
 // ErrCircuitOpen is returned when the Circuit Breaker blocks requests to Sonos.

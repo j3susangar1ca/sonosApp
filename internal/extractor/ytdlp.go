@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jesuslangarica/sonosApp/internal/models"
+	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 )
 
 // Allowed YouTube domains for whitelisting (Section 6)
@@ -251,8 +252,12 @@ func (wp *WorkerPool) worker() {
 
 		// Enforce strict 30-second timeout for resolving URLs
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		startTime := time.Now()
 		track, err := ResolveURL(ctx, wp.ytdlpPath, task.URL)
+		duration := time.Since(startTime).Seconds()
 		cancel()
+
+		telemetry.ObserveYoutubeLatency(duration)
 
 		atomic.AddInt32(&wp.activeJobs, -1)
 
