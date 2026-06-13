@@ -3,9 +3,9 @@ package player
 import (
 	"bytes"
 	"context"
+	"encoding/xml"
 	"errors"
 	"fmt"
-	"html"
 	"log/slog"
 	"math"
 	"math/rand"
@@ -149,8 +149,9 @@ func (s *SonosPlayer) PlayTrack(track models.Track, volume int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// Escape special characters in streaming URLs (such as & in YouTube query parameters)
-	escapedURL := html.EscapeString(track.URL)
+	// Escape special characters in streaming URLs for XML context
+	// Only escape &, <, > which are problematic in XML, not the entire URL
+	escapedURL := xml.EscapeString(track.URL)
 
 	setURIBody := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">

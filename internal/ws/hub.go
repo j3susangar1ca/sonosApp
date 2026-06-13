@@ -244,7 +244,11 @@ func (c *Client) writePump(sendTimeout time.Duration) {
 // readPump listens for user incoming heartbeats (TextMessage "ping").
 func (c *Client) readPump(hub *WebSocketHub) {
 	defer func() {
-		hub.unregister <- c
+		select {
+		case hub.unregister <- c:
+		case <-time.After(5 * time.Second):
+			slog.Warn("Failed to unregister client, forcing close", "user_id", c.ID)
+		}
 		if c.Conn != nil {
 			_ = c.Conn.Close()
 		}
@@ -255,12 +259,16 @@ func (c *Client) readPump(hub *WebSocketHub) {
 	}
 
 	c.Conn.SetReadLimit(512)
+	c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 	for {
 		msgType, msg, err := c.Conn.ReadMessage()
 		if err != nil {
 			break
 		}
+
+		// Renew read deadline after successful message
+		c.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 
 		if msgType == websocket.TextMessage && string(msg) == "ping" {
 			hub.HandleHeartbeat(c.ID)

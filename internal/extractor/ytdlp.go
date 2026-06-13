@@ -126,9 +126,10 @@ type Result struct {
 
 // PriorityQueue represents a thread-safe priority queue for resolution tasks.
 type PriorityQueue struct {
-	mu    sync.Mutex
-	cond  *sync.Cond
-	tasks []*Task
+	mu      sync.Mutex
+	cond    *sync.Cond
+	tasks   []*Task
+	stopped bool
 }
 
 // NewPriorityQueue initializes a PriorityQueue.
@@ -166,19 +167,35 @@ func (pq *PriorityQueue) Push(task *Task) {
 }
 
 // Pop retrieves and removes the highest priority task from the queue.
-// It blocks until a task is available.
-func (pq *PriorityQueue) Pop() *Task {
+// It blocks until a task is available or the queue is stopped.
+func (pq *PriorityQueue) Pop(stopCh <-chan struct{}) (*Task, error) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
-	for len(pq.tasks) == 0 {
-		pq.cond.Wait()
+	for len(pq.tasks) == 0 && !pq.stopped {
+		done := make(chan struct{})
+		go func() {
+			pq.cond.Wait()
+			close(done)
+		}()
+		select {
+		case <-stopCh:
+			pq.stopped = true
+			pq.cond.Broadcast()
+			return nil, errors.New("queue stopped")
+		case <-done:
+			// Continue loop to check if we have tasks or stopped
+		}
+	}
+
+	if pq.stopped && len(pq.tasks) == 0 {
+		return nil, errors.New("queue stopped")
 	}
 
 	task := pq.tasks[0]
 	pq.tasks[0] = nil // avoid memory leak
 	pq.tasks = pq.tasks[1:]
-	return task
+	return task, nil
 }
 
 // WorkerPool controls extraction tasks with a concurrency cap of 2 goroutines.
@@ -244,7 +261,11 @@ func (wp *WorkerPool) worker() {
 		default:
 		}
 
-		task := wp.queue.Pop()
+		task, err := wp.queue.Pop(wp.stopChan)
+		if err != nil {
+			// Queue stopped, exit worker
+			return
+		}
 		if task == nil {
 			// Sentinel nil unblocked us or queue was cleared. Exit loop if stopped.
 			select {
