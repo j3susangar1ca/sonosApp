@@ -1,6 +1,7 @@
 package player
 
 import (
+	"encoding/json"
 	"log/slog"
 	"math"
 	"sync"
@@ -625,4 +626,116 @@ func (f *JukeboxFSM) GetKarma() map[string]float64 {
 		karmaCopy[u] = k
 	}
 	return karmaCopy
+}
+
+// JukeboxStateSnapshot represents a full snapshot of the FSM's play state and user karma.
+type JukeboxStateSnapshot struct {
+	Queue        []models.Track     `json:"queue"`
+	CurrentTrack *models.Track      `json:"current_track"`
+	Volume       int                `json:"volume"`
+	History      []HistoryEntry     `json:"history"`
+	Karma        map[string]float64 `json:"karma"`
+}
+
+// ExportSnapshot returns a deep copy of the FSM state.
+func (f *JukeboxFSM) ExportSnapshot() JukeboxStateSnapshot {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	f.demoMu.Lock()
+	defer f.demoMu.Unlock()
+
+	var qTracks []models.Track
+	if f.queue != nil {
+		qTracks = f.queue.All()
+	}
+
+	karmaCopy := make(map[string]float64, len(f.karma))
+	for u, k := range f.karma {
+		karmaCopy[u] = k
+	}
+
+	// Copy history
+	histCopy := make([]HistoryEntry, len(f.history))
+	copy(histCopy, f.history)
+
+	var currCopy *models.Track
+	if f.currentTrack != nil {
+		c := *f.currentTrack
+		currCopy = &c
+	}
+
+	return JukeboxStateSnapshot{
+		Queue:        qTracks,
+		CurrentTrack: currCopy,
+		Volume:       f.volume,
+		History:      histCopy,
+		Karma:        karmaCopy,
+	}
+}
+
+// ImportSnapshot overrides the current FSM state with the given snapshot.
+func (f *JukeboxFSM) ImportSnapshot(snap JukeboxStateSnapshot) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.demoMu.Lock()
+	defer f.demoMu.Unlock()
+
+	f.queue.Clear()
+	for _, t := range snap.Queue {
+		f.queue.Enqueue(t)
+	}
+	f.currentTrack = snap.CurrentTrack
+	f.volume = snap.Volume
+	f.history = snap.History
+
+	f.karma = make(map[string]float64)
+	for u, k := range snap.Karma {
+		f.karma[u] = k
+	}
+}
+
+// ApplyDelta replays a specific delta operation onto the FSM directly.
+func (f *JukeboxFSM) ApplyDelta(op string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	switch op {
+	case "append":
+		var t models.Track
+		if err := json.Unmarshal(data, &t); err != nil {
+			return err
+		}
+		// Restore stats if they exist
+		if stats, exists := f.trackStats[t.ID]; exists {
+			t.PlayCount = stats.PlayCount
+			t.SkipCount = stats.SkipCount
+			t.TauLast = stats.TauLast
+		}
+		f.queue.Enqueue(t)
+
+	case "dequeue":
+		track, err := f.queue.Dequeue()
+		if err == nil {
+			f.currentTrack = &track
+		}
+
+	case "skip":
+		if f.currentTrack != nil {
+			f.currentTrack.SkipCount++
+			f.currentTrack.TauLast = time.Now()
+			f.trackStats[f.currentTrack.ID] = f.currentTrack
+		}
+
+	case "volume":
+		var vol int
+		if err := json.Unmarshal(data, &vol); err != nil {
+			return err
+		}
+		f.volume = vol
+
+	case "clear":
+		f.queue.Clear()
+		f.currentTrack = nil
+	}
+	return nil
 }
