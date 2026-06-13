@@ -50,18 +50,21 @@ type AddTrackPayload struct {
 	URL       string    `json:"url"`
 	UserID    string    `json:"user_id"`
 	Timestamp time.Time `json:"timestamp"`
+	ZoneID    string    `json:"zone_id,omitempty"`
 }
 
 // SetVolumePayload contains parameters for ActionSetVolume.
 type SetVolumePayload struct {
 	Level  int    `json:"level"`
 	UserID string `json:"user_id"`
+	ZoneID string `json:"zone_id,omitempty"`
 }
 
 // Command represents an input action from a user or internal system.
 type Command struct {
 	Type    EventType   `json:"type"`
 	Payload interface{} `json:"payload"`
+	ZoneID  string      `json:"zone_id,omitempty"`
 }
 
 // Envelope represents an event distributed by the EventBus to subscribers.
