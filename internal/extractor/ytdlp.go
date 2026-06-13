@@ -130,13 +130,20 @@ func NewPriorityQueue() *PriorityQueue {
 }
 
 // Push appends a task keeping the list sorted by priority.
+// Nil tasks are treated as shutdown sentinels and appended to the end.
 func (pq *PriorityQueue) Push(task *Task) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
+	if task == nil {
+		pq.tasks = append(pq.tasks, nil)
+		pq.cond.Signal()
+		return
+	}
+
 	inserted := false
 	for i, t := range pq.tasks {
-		if task.Priority < t.Priority {
+		if t != nil && task.Priority < t.Priority {
 			pq.tasks = append(pq.tasks[:i], append([]*Task{task}, pq.tasks[i:]...)...)
 			inserted = true
 			break
@@ -147,6 +154,22 @@ func (pq *PriorityQueue) Push(task *Task) {
 	}
 
 	pq.cond.Signal()
+}
+
+// Pop retrieves and removes the highest priority task from the queue.
+// It blocks until a task is available.
+func (pq *PriorityQueue) Pop() *Task {
+	pq.mu.Lock()
+	defer pq.mu.Unlock()
+
+	for len(pq.tasks) == 0 {
+		pq.cond.Wait()
+	}
+
+	task := pq.tasks[0]
+	pq.tasks[0] = nil // avoid memory leak
+	pq.tasks = pq.tasks[1:]
+	return task
 }
 
 // WorkerPool controls extraction tasks with a concurrency cap of 2 goroutines.
@@ -179,9 +202,9 @@ func (wp *WorkerPool) Start() {
 func (wp *WorkerPool) Stop() {
 	close(wp.stopChan)
 
-	wp.queue.mu.Lock()
-	wp.queue.cond.Broadcast()
-	wp.queue.mu.Unlock()
+	// Send nil sentinels to unblock any workers waiting on Pop()
+	wp.queue.Push(nil)
+	wp.queue.Push(nil)
 
 	wp.wg.Wait()
 }
@@ -212,31 +235,15 @@ func (wp *WorkerPool) worker() {
 		default:
 		}
 
-		wp.queue.mu.Lock()
-		for len(wp.queue.tasks) == 0 {
+		task := wp.queue.Pop()
+		if task == nil {
+			// Sentinel nil unblocked us or queue was cleared. Exit loop if stopped.
 			select {
 			case <-wp.stopChan:
-				wp.queue.mu.Unlock()
 				return
 			default:
+				continue
 			}
-			wp.queue.cond.Wait()
-		}
-
-		select {
-		case <-wp.stopChan:
-			wp.queue.mu.Unlock()
-			return
-		default:
-		}
-
-		task := wp.queue.tasks[0]
-		wp.queue.tasks[0] = nil // avoid memory leak
-		wp.queue.tasks = wp.queue.tasks[1:]
-		wp.queue.mu.Unlock()
-
-		if task == nil {
-			continue
 		}
 
 		atomic.AddInt32(&wp.activeJobs, 1)
