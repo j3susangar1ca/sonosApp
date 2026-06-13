@@ -1,7 +1,11 @@
 package api
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -23,12 +27,16 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// maxWebhookBodySize defines the maximum allowed webhook body size (4KB) to mitigate DoS.
+const maxWebhookBodySize = 4096
+
 // NewRouter configures the perimeter HTTP endpoints using Go 1.22+ native ServeMux routing capabilities.
 func NewRouter(
 	fsm *player.JukeboxFSM,
 	eb *eventbus.EventBus,
 	hub *ws.WebSocketHub,
 	proxy *streaming.StreamingProxy,
+	webhookSecret string,
 ) http.Handler {
 	mux := http.NewServeMux()
 
@@ -43,6 +51,9 @@ func NewRouter(
 	mux.HandleFunc("GET /api/users", handleGetUsers(fsm))
 	mux.HandleFunc("GET /api/ws", handleWebSocket(hub))
 	mux.Handle("GET /metrics", telemetry.Handler())
+
+	// Calendar Webhook endpoint (§15) — HMAC-SHA256 secured
+	mux.HandleFunc("POST /api/webhooks/calendar", handleCalendarWebhook(eb, webhookSecret))
 
 	// Local file streaming proxy mount
 	mux.HandleFunc("GET /stream", func(w http.ResponseWriter, r *http.Request) {
@@ -231,3 +242,89 @@ func handleWebSocket(hub *ws.WebSocketHub) http.HandlerFunc {
 		hub.Register(client)
 	}
 }
+
+// handleCalendarWebhook implements the POST /api/webhooks/calendar endpoint (§15).
+// Security: HMAC-SHA256 validation with constant-time comparison.
+// Invariant: CalendarWebhook(event) = Inject(E_temporal(event), CH_in)
+func handleCalendarWebhook(eb *eventbus.EventBus, secret string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Guard: reject requests if no secret is configured
+		if secret == "" {
+			slog.Warn("Calendar webhook called but no secret is configured")
+			http.Error(w, "webhook not configured", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Limit body size to mitigate DoS (§ISO 27001 — input sanitization)
+		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			slog.Warn("Calendar webhook body read failed (possibly oversized)", "error", err)
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		// Validate HMAC-SHA256 signature (constant-time comparison)
+		signature := r.Header.Get("X-Webhook-Signature")
+		if signature == "" {
+			slog.Warn("Calendar webhook received without signature header",
+				"remote_addr", r.RemoteAddr)
+			http.Error(w, "missing signature", http.StatusForbidden)
+			return
+		}
+
+		expectedMAC := computeHMAC(body, []byte(secret))
+		if !hmac.Equal([]byte(signature), []byte(expectedMAC)) {
+			slog.Warn("Calendar webhook HMAC validation failed",
+				"remote_addr", r.RemoteAddr)
+			http.Error(w, "invalid signature", http.StatusForbidden)
+			return
+		}
+
+		// Deserialize payload
+		var payload models.CalendarWebhookPayload
+		if err := json.Unmarshal(body, &payload); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Map calendar event to FSM action (§15.2)
+		var actionType models.EventType
+		switch payload.EventType {
+		case models.CalendarMeetingStart:
+			actionType = models.ActionPause
+			slog.Info("Calendar event: meeting started, injecting pause",
+				"title", payload.Title,
+				"zone_id", payload.ZoneID,
+			)
+		case models.CalendarMeetingEnd:
+			actionType = models.ActionResume
+			slog.Info("Calendar event: meeting ended, injecting resume",
+				"title", payload.Title,
+				"zone_id", payload.ZoneID,
+			)
+		default:
+			http.Error(w, "unsupported event_type", http.StatusBadRequest)
+			return
+		}
+
+		// Inject into EventBus — processed by existing Pause/Resume workers
+		cmd := models.Command{
+			Type:    actionType,
+			Payload: nil,
+		}
+		eb.Inject(cmd)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+// computeHMAC generates a hex-encoded HMAC-SHA256 digest.
+func computeHMAC(message, key []byte) string {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(message)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+

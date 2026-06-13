@@ -78,6 +78,7 @@ func main() {
 	stateJsonOpt := flag.String("state-json", getEnv("STATE_JSON", "state.json"), "Path to the snapshot JSON file")
 	maxDeltasOpt := flag.Int("max-deltas", 1000, "Maximum deltas before triggering a snapshot rotation")
 	ytdlpPathOpt := flag.String("ytdlp-path", getEnv("YTDLP_PATH", "yt-dlp"), "Path to the yt-dlp executable")
+	calendarSecretOpt := flag.String("calendar-secret", getEnv("CALENDAR_WEBHOOK_SECRET", ""), "Shared secret for calendar webhook HMAC-SHA256 validation")
 	flag.Parse()
 
 	// Initialize Structured Logging in JSON format targeting stdout
@@ -159,7 +160,7 @@ func main() {
 	subscribeEventBusWorkers(eb, fsm, pool, lruCache, persister)
 
 	// 11. Start HTTP Server
-	router := api.NewRouter(fsm, eb, hub, proxy)
+	router := api.NewRouter(fsm, eb, hub, proxy, *calendarSecretOpt)
 	server := &http.Server{
 		Addr:    ":" + *portOpt,
 		Handler: router,
