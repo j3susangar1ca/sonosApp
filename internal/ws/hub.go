@@ -55,6 +55,22 @@ func NewWebSocketHub(fsm *player.JukeboxFSM) *WebSocketHub {
 	}
 }
 
+// Register adds a client to the hub's registry.
+func (h *WebSocketHub) Register(c *Client) {
+	select {
+	case h.register <- c:
+	case <-h.stopChan:
+	}
+}
+
+// Unregister removes a client from the hub's registry.
+func (h *WebSocketHub) Unregister(c *Client) {
+	select {
+	case h.unregister <- c:
+	case <-h.stopChan:
+	}
+}
+
 // Start runs the hub registration and heartbeat sweep workers.
 func (h *WebSocketHub) Start() {
 	h.wg.Add(2)
