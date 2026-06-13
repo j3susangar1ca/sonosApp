@@ -238,48 +238,6 @@ function handleWebSocketMessage(data) {
 }
 
 // Pull dynamic state list updates
-async function fetchQueueAndUsers() {
-    try {
-        // Since FSM state updates are pushed over WS, we can trigger active list queries.
-        // For security and cleanliness, the queue and active user lists are read directly from endpoints.
-        // We will fetch lists by requesting our state endpoints.
-        // If we don't have dedicated endpoints, we can request FSM summaries,
-        // or let's build them by querying local endpoints if the router has them.
-        // Wait, did we implement GET /api/queue in router.go?
-        // Let's check router.go: we only exposed POST endpoints and stream proxy.
-        // Oh! How can we query the queue if router.go doesn't have queue endpoints?
-        // Wait! We can add GET endpoints for `/api/queue` and `/api/users` in `router.go` to support loading the queue lists!
-        // Yes, that is a missing part of our API router that we need for the UI to list the tracks and users!
-        // Let's see: we should make sure our router supports GET `/api/state` or GET `/api/queue` and GET `/api/users`.
-        // Let's plan to make a fetch query, or if we fetch, we can read the FSM state.
-        // Wait, does `/api/ws` upgrade handshake state change push everything?
-        // Yes, when a connection upgrades or when state changes, it pushes `state_change` with `current_track` and `volume`.
-        // But what about the queue list? It doesn't push the entire queue in the StateChange event, or does it?
-        // Wait! Let's check FSMObserver OnStateChange implementation in main.go:
-        // ```go
-        // 	msg, err := json.Marshal(map[string]interface{}{
-        // 		"event":         "state_change",
-        // 		"old_state":     oldState.String(),
-        // 		"new_state":     newState.String(),
-        // 		"current_track": currentTrack,
-        // 		"volume":        volume,
-        // 	})
-        // ```
-        // It pushes current_track, but it does NOT push the entire queue list or active users!
-        // To show the queue list and active users, the client needs endpoints!
-        // Let's verify if we can add endpoints `GET /api/queue` and `GET /api/users` to `internal/api/router.go`.
-        // Yes, that is an excellent API refinement that will allow the JS client to load the list of tracks in the queue and active users!
-        // Let's write them down. We will implement these endpoints.
-        // Wait, let's look at how the JS client will fetch them:
-        // `/api/queue` -> returns a list of tracks in the queue.
-        // `/api/users` -> returns a list of active users and skip votes.
-        
-    } catch (err) {
-        slog("error", "Failed to fetch lists", err);
-    }
-}
-
-// Real Fetch API implementers
 async function loadQueueAndUsersFromServer() {
     try {
         // Fetch queue tracks for the current zone
@@ -300,16 +258,16 @@ async function loadQueueAndUsersFromServer() {
     }
 }
 
-// Override fetchQueueAndUsers to call our implementation
-fetchQueueAndUsers = loadQueueAndUsersFromServer;
-
 // Render queue list dynamically
 function renderQueue(queue) {
     queueTracksList.innerHTML = "";
     queueSizeLabel.textContent = `${queue.length} pistas`;
 
     if (!queue || queue.length === 0) {
-        queueTracksList.innerHTML = '<div class="no-data">La cola está vacía</div>';
+        const noData = document.createElement("div");
+        noData.className = "no-data";
+        noData.textContent = "La cola está vacía";
+        queueTracksList.appendChild(noData);
         return;
     }
 
@@ -321,15 +279,41 @@ function renderQueue(queue) {
         const title = track.meta.title || track.url;
         const user = track.user_id || "Sistema";
 
-        item.innerHTML = `
-            <div class="q-index">${index + 1}</div>
-            <img src="${thumb}" alt="Thumb" class="q-art">
-            <div class="q-details">
-                <div class="q-title" title="${title}">${title}</div>
-                <div class="q-added">Agregado por @${user}</div>
-            </div>
-            <div class="q-duration">${formatDuration(track.dur)}</div>
-        `;
+        // Create elements safely to prevent XSS
+        const qIndex = document.createElement("div");
+        qIndex.className = "q-index";
+        qIndex.textContent = String(index + 1);
+
+        const img = document.createElement("img");
+        img.className = "q-art";
+        img.alt = "Thumb";
+        // Validate thumbnail URL starts with https://
+        if (thumb.startsWith("https://")) {
+            img.src = thumb;
+        }
+
+        const qDetails = document.createElement("div");
+        qDetails.className = "q-details";
+
+        const qTitle = document.createElement("div");
+        qTitle.className = "q-title";
+        qTitle.title = title;
+        qTitle.textContent = title;
+
+        const qAdded = document.createElement("div");
+        qAdded.className = "q-added";
+        qAdded.textContent = `Agregado por @${user}`;
+
+        const qDuration = document.createElement("div");
+        qDuration.className = "q-duration";
+        qDuration.textContent = formatDuration(track.dur);
+
+        qDetails.appendChild(qTitle);
+        qDetails.appendChild(qAdded);
+        item.appendChild(qIndex);
+        item.appendChild(img);
+        item.appendChild(qDetails);
+        item.appendChild(qDuration);
         queueTracksList.appendChild(item);
     });
 }
@@ -340,7 +324,10 @@ function renderUsersAndVotes(users, votes, karma) {
     const activeUserCount = Object.keys(users).length;
 
     if (activeUserCount === 0) {
-        activeUsersList.innerHTML = '<div class="no-data">No hay usuarios activos</div>';
+        const noData = document.createElement("div");
+        noData.className = "no-data";
+        noData.textContent = "No hay usuarios activos";
+        activeUsersList.appendChild(noData);
         return;
     }
 
@@ -358,7 +345,23 @@ function renderUsersAndVotes(users, votes, karma) {
         }
 
         const score = karma[username] !== undefined ? karma[username].toFixed(1) : "0.0";
-        badge.innerHTML = `@${username} <span style="font-size:10px; opacity:0.6; margin-left:4px;">(${score}⭐)</span> ${hasVoted ? '🗳️' : ''}`;
+        // Use textContent to prevent XSS on username
+        const usernameSpan = document.createElement("span");
+        usernameSpan.textContent = `@${username}`;
+        badge.appendChild(usernameSpan);
+
+        const scoreSpan = document.createElement("span");
+        scoreSpan.style.fontSize = "10px";
+        scoreSpan.style.opacity = "0.6";
+        scoreSpan.style.marginLeft = "4px";
+        scoreSpan.textContent = `(${score}⭐)`;
+        badge.appendChild(scoreSpan);
+
+        if (hasVoted) {
+            const voteIcon = document.createTextNode(" 🗳️");
+            badge.appendChild(voteIcon);
+        }
+
         activeUsersList.appendChild(badge);
     }
 
@@ -482,18 +485,6 @@ btnSkip.addEventListener("click", async () => {
         });
     } catch (err) {
         slog("error", "Skip request failed", err);
-    }
-});
-
-btnPause.addEventListener("click", async () => {
-    try {
-        await fetch("/api/pause", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ zone_id: currentZone })
-        });
-    } catch (err) {
-        slog("error", "Pause request failed", err);
     }
 });
 
