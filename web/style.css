@@ -647,3 +647,64 @@ body {
     width: 100%;
     padding: 14px;
 }
+
+/* Zone Selector Styles */
+.zone-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.zone-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.zone-selector {
+    appearance: none;
+    -webkit-appearance: none;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 6px 32px 6px 14px;
+    color: #f1f3f9;
+    font-family: 'Outfit', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    /* Custom dropdown arrow via background-image */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
+
+.zone-selector:hover {
+    border-color: rgba(6, 182, 212, 0.4);
+}
+
+.zone-selector:focus {
+    border-color: rgba(6, 182, 212, 0.6);
+    box-shadow: 0 0 8px rgba(6, 182, 212, 0.15);
+}
+
+.zone-selector option {
+    background: #1a1b2e;
+    color: #f1f3f9;
+    padding: 8px;
+}
+
+/* Responsive: hide zone label on very small screens */
+@media (max-width: 600px) {
+    .zone-label {
+        display: none;
+    }
+    .header-card {
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+}
