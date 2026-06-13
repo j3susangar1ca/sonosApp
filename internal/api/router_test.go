@@ -273,6 +273,7 @@ func TestRouterEndpoints(t *testing.T) {
 	})
 
 	t.Run("GetUsers", func(t *testing.T) {
+		fsm.AddUser("alice")
 		fsm.AddUser("charlie")
 		fsm.VoteSkip("charlie")
 
@@ -294,11 +295,14 @@ func TestRouterEndpoints(t *testing.T) {
 			t.Fatalf("failed to unmarshal users response: %v", err)
 		}
 
-		if !res.Users["charlie"] {
-			t.Error("expected user charlie to be active")
+		if !res.Users["charlie"] || !res.Users["alice"] {
+			t.Error("expected users charlie and alice to be active")
 		}
 		if !res.Votes["charlie"] {
 			t.Error("expected user charlie to have voted")
+		}
+		if res.Votes["alice"] {
+			t.Error("expected user alice to not have voted")
 		}
 	})
 }
