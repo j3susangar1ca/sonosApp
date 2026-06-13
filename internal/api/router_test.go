@@ -2,9 +2,13 @@ package api
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -39,7 +43,8 @@ func TestRouterEndpoints(t *testing.T) {
 		t.Fatalf("failed to create proxy: %v", err)
 	}
 
-	router := NewRouter(fsm, eb, hub, proxy)
+	const testWebhookSecret = "test-secret-key-for-hmac"
+	router := NewRouter(fsm, eb, hub, proxy, testWebhookSecret)
 
 	t.Run("AddTrackValid", func(t *testing.T) {
 		// Subscribe to eb to verify injection
@@ -338,6 +343,148 @@ func TestRouterEndpoints(t *testing.T) {
 			if !bytes.Contains(w.Body.Bytes(), []byte(m)) {
 				t.Errorf("expected metric %s to be present in metrics output", m)
 			}
+		}
+	})
+}
+
+func testHMAC(body []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestCalendarWebhook(t *testing.T) {
+	const testSecret = "calendar-test-secret"
+
+	fsm := player.NewJukeboxFSM(15, nil)
+	eb := eventbus.NewEventBus(10, 50*time.Millisecond)
+	defer eb.Stop()
+
+	hub := ws.NewWebSocketHub(fsm)
+	hub.Start()
+	defer hub.Stop()
+
+	tempDir := t.TempDir()
+	proxy, err := streaming.NewStreamingProxy(tempDir, "http://localhost:8080")
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	router := NewRouter(fsm, eb, hub, proxy, testSecret)
+
+	t.Run("ValidHMAC_MeetingStart", func(t *testing.T) {
+		ch := make(chan models.Envelope, 1)
+		eb.Subscribe(models.ActionPause, "test-cal-pause", ch)
+		defer eb.Unsubscribe(models.ActionPause, "test-cal-pause")
+
+		payload := map[string]interface{}{
+			"event_type": "meeting_start",
+			"title":      "Daily Standup",
+		}
+		body, _ := json.Marshal(payload)
+		sig := testHMAC(body, testSecret)
+
+		req := httptest.NewRequest("POST", "/api/webhooks/calendar", bytes.NewBuffer(body))
+		req.Header.Set("X-Webhook-Signature", sig)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected status 202, got %d: %s", w.Code, w.Body.String())
+		}
+
+		select {
+		case env := <-ch:
+			eb.Ack(env.ID, "test-cal-pause")
+			if env.Type != models.ActionPause {
+				t.Errorf("expected ActionPause, got %s", env.Type)
+			}
+		case <-time.After(200 * time.Millisecond):
+			t.Error("timed out waiting for ActionPause injection")
+		}
+	})
+
+	t.Run("ValidHMAC_MeetingEnd", func(t *testing.T) {
+		ch := make(chan models.Envelope, 1)
+		eb.Subscribe(models.ActionResume, "test-cal-resume", ch)
+		defer eb.Unsubscribe(models.ActionResume, "test-cal-resume")
+
+		payload := map[string]interface{}{
+			"event_type": "meeting_end",
+			"title":      "Daily Standup",
+		}
+		body, _ := json.Marshal(payload)
+		sig := testHMAC(body, testSecret)
+
+		req := httptest.NewRequest("POST", "/api/webhooks/calendar", bytes.NewBuffer(body))
+		req.Header.Set("X-Webhook-Signature", sig)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusAccepted {
+			t.Errorf("expected status 202, got %d: %s", w.Code, w.Body.String())
+		}
+
+		select {
+		case env := <-ch:
+			eb.Ack(env.ID, "test-cal-resume")
+			if env.Type != models.ActionResume {
+				t.Errorf("expected ActionResume, got %s", env.Type)
+			}
+		case <-time.After(200 * time.Millisecond):
+			t.Error("timed out waiting for ActionResume injection")
+		}
+	})
+
+	t.Run("InvalidHMAC", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"event_type": "meeting_start",
+		}
+		body, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest("POST", "/api/webhooks/calendar", bytes.NewBuffer(body))
+		req.Header.Set("X-Webhook-Signature", "invalid-signature")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected status 403, got %d", w.Code)
+		}
+	})
+
+	t.Run("MissingSignature", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"event_type": "meeting_start",
+		}
+		body, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest("POST", "/api/webhooks/calendar", bytes.NewBuffer(body))
+		// No X-Webhook-Signature header
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected status 403, got %d", w.Code)
+		}
+	})
+
+	t.Run("OversizedBody", func(t *testing.T) {
+		// Body larger than maxWebhookBodySize (4096 bytes)
+		bigBody := []byte(strings.Repeat("x", 5000))
+		sig := testHMAC(bigBody, testSecret)
+
+		req := httptest.NewRequest("POST", "/api/webhooks/calendar", bytes.NewBuffer(bigBody))
+		req.Header.Set("X-Webhook-Signature", sig)
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("expected status 413, got %d", w.Code)
 		}
 	})
 }
