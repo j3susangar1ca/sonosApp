@@ -13,7 +13,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jesuslangarica/sonosApp/internal/eventbus"
 	"github.com/jesuslangarica/sonosApp/internal/models"
-	"github.com/jesuslangarica/sonosApp/internal/player"
 	"github.com/jesuslangarica/sonosApp/internal/streaming"
 	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 	"github.com/jesuslangarica/sonosApp/internal/ws"
@@ -31,8 +30,9 @@ var upgrader = websocket.Upgrader{
 const maxWebhookBodySize = 4096
 
 // NewRouter configures the perimeter HTTP endpoints using Go 1.22+ native ServeMux routing capabilities.
+// §20: Accepts a ZoneRegistry instead of a single FSM to support multiple independent audio zones.
 func NewRouter(
-	fsm *player.JukeboxFSM,
+	registry *ZoneRegistry,
 	eb *eventbus.EventBus,
 	hub *ws.WebSocketHub,
 	proxy *streaming.StreamingProxy,
@@ -40,15 +40,16 @@ func NewRouter(
 ) http.Handler {
 	mux := http.NewServeMux()
 
-	// API endpoints
+	// API endpoints — all zone-aware with fallback to "default"
 	mux.HandleFunc("POST /api/tracks", handleAddTrack(eb))
 	mux.HandleFunc("POST /api/skip", handleSkip(eb))
 	mux.HandleFunc("POST /api/volume", handleSetVolume(eb))
 	mux.HandleFunc("POST /api/clear", handleClearQueue(eb))
 	mux.HandleFunc("POST /api/pause", handlePause(eb))
 	mux.HandleFunc("POST /api/resume", handleResume(eb))
-	mux.HandleFunc("GET /api/queue", handleGetQueue(fsm))
-	mux.HandleFunc("GET /api/users", handleGetUsers(fsm))
+	mux.HandleFunc("GET /api/queue", handleGetQueue(registry))
+	mux.HandleFunc("GET /api/users", handleGetUsers(registry))
+	mux.HandleFunc("GET /api/zones", handleGetZones(registry))
 	mux.HandleFunc("GET /api/ws", handleWebSocket(hub))
 	mux.Handle("GET /metrics", telemetry.Handler())
 
@@ -68,6 +69,7 @@ func handleAddTrack(eb *eventbus.EventBus) http.HandlerFunc {
 		var req struct {
 			URL    string `json:"url"`
 			UserID string `json:"user_id"`
+			ZoneID string `json:"zone_id,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -86,7 +88,9 @@ func handleAddTrack(eb *eventbus.EventBus) http.HandlerFunc {
 				URL:       req.URL,
 				UserID:    req.UserID,
 				Timestamp: time.Now(),
+				ZoneID:    ResolveZoneID(req.ZoneID),
 			},
+			ZoneID: ResolveZoneID(req.ZoneID),
 		}
 
 		eb.Inject(cmd)
@@ -101,6 +105,7 @@ func handleSkip(eb *eventbus.EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			UserID string `json:"user_id"`
+			ZoneID string `json:"zone_id,omitempty"`
 		}
 
 		// Body is optional for skips
@@ -109,6 +114,7 @@ func handleSkip(eb *eventbus.EventBus) http.HandlerFunc {
 		cmd := models.Command{
 			Type:    models.ActionSkip,
 			Payload: req.UserID,
+			ZoneID:  ResolveZoneID(req.ZoneID),
 		}
 
 		eb.Inject(cmd)
@@ -124,6 +130,7 @@ func handleSetVolume(eb *eventbus.EventBus) http.HandlerFunc {
 		var req struct {
 			Level  int    `json:"level"`
 			UserID string `json:"user_id"`
+			ZoneID string `json:"zone_id,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -141,7 +148,9 @@ func handleSetVolume(eb *eventbus.EventBus) http.HandlerFunc {
 			Payload: models.SetVolumePayload{
 				Level:  req.Level,
 				UserID: req.UserID,
+				ZoneID: ResolveZoneID(req.ZoneID),
 			},
+			ZoneID: ResolveZoneID(req.ZoneID),
 		}
 
 		eb.Inject(cmd)
@@ -154,9 +163,15 @@ func handleSetVolume(eb *eventbus.EventBus) http.HandlerFunc {
 
 func handleClearQueue(eb *eventbus.EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ZoneID string `json:"zone_id,omitempty"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
 		cmd := models.Command{
 			Type:    models.ActionClearQueue,
 			Payload: nil,
+			ZoneID:  ResolveZoneID(req.ZoneID),
 		}
 
 		eb.Inject(cmd)
@@ -169,9 +184,15 @@ func handleClearQueue(eb *eventbus.EventBus) http.HandlerFunc {
 
 func handlePause(eb *eventbus.EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ZoneID string `json:"zone_id,omitempty"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
 		cmd := models.Command{
 			Type:    models.ActionPause,
 			Payload: nil,
+			ZoneID:  ResolveZoneID(req.ZoneID),
 		}
 
 		eb.Inject(cmd)
@@ -184,9 +205,15 @@ func handlePause(eb *eventbus.EventBus) http.HandlerFunc {
 
 func handleResume(eb *eventbus.EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ZoneID string `json:"zone_id,omitempty"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+
 		cmd := models.Command{
 			Type:    models.ActionResume,
 			Payload: nil,
+			ZoneID:  ResolveZoneID(req.ZoneID),
 		}
 
 		eb.Inject(cmd)
@@ -197,9 +224,17 @@ func handleResume(eb *eventbus.EventBus) http.HandlerFunc {
 	}
 }
 
-func handleGetQueue(fsm *player.JukeboxFSM) http.HandlerFunc {
+// handleGetQueue returns the queue for a specific zone (query param: zone_id).
+func handleGetQueue(registry *ZoneRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		queue := fsm.GetQueue()
+		zoneID := ResolveZoneID(r.URL.Query().Get("zone_id"))
+		zone, ok := registry.Get(zoneID)
+		if !ok {
+			http.Error(w, "zone not found", http.StatusNotFound)
+			return
+		}
+
+		queue := zone.FSM.GetQueue()
 		if queue == nil {
 			queue = make([]models.Track, 0)
 		}
@@ -208,11 +243,19 @@ func handleGetQueue(fsm *player.JukeboxFSM) http.HandlerFunc {
 	}
 }
 
-func handleGetUsers(fsm *player.JukeboxFSM) http.HandlerFunc {
+// handleGetUsers returns the active users and votes for a specific zone (query param: zone_id).
+func handleGetUsers(registry *ZoneRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		users := fsm.GetActiveUsers()
-		votes := fsm.GetVotes()
-		karma := fsm.GetKarma()
+		zoneID := ResolveZoneID(r.URL.Query().Get("zone_id"))
+		zone, ok := registry.Get(zoneID)
+		if !ok {
+			http.Error(w, "zone not found", http.StatusNotFound)
+			return
+		}
+
+		users := zone.FSM.GetActiveUsers()
+		votes := zone.FSM.GetVotes()
+		karma := zone.FSM.GetKarma()
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -220,6 +263,35 @@ func handleGetUsers(fsm *player.JukeboxFSM) http.HandlerFunc {
 			"votes": votes,
 			"karma": karma,
 		})
+	}
+}
+
+// handleGetZones returns all registered zones with their current state (§20).
+func handleGetZones(registry *ZoneRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zones := registry.All()
+		type zoneInfo struct {
+			ID       string `json:"id"`
+			SonosIP  string `json:"sonos_ip"`
+			State    string `json:"state"`
+			Volume   int    `json:"volume"`
+			QueueLen int    `json:"queue_len"`
+		}
+
+		result := make([]zoneInfo, 0, len(zones))
+		for _, z := range zones {
+			state, _, vol := z.FSM.GetState()
+			result = append(result, zoneInfo{
+				ID:       z.ID,
+				SonosIP:  z.SonosIP,
+				State:    state.String(),
+				Volume:   vol,
+				QueueLen: len(z.FSM.GetQueue()),
+			})
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(result)
 	}
 }
 
@@ -312,6 +384,7 @@ func handleCalendarWebhook(eb *eventbus.EventBus, secret string) http.HandlerFun
 		cmd := models.Command{
 			Type:    actionType,
 			Payload: nil,
+			ZoneID:  ResolveZoneID(payload.ZoneID),
 		}
 		eb.Inject(cmd)
 
@@ -327,4 +400,3 @@ func computeHMAC(message, key []byte) string {
 	mac.Write(message)
 	return hex.EncodeToString(mac.Sum(nil))
 }
-
