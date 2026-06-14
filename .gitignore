@@ -1,1 +1,3 @@
-Nothing needs to be added to the .gitignore file based on the provided changes. The addition of 'setup.sh' does not require any new ignore rules as it's a shell script file. The current .gitignore content remains unchanged.
+Nothing needs to be added to the .gitignore file based on the provided changes. The addition of 'setup.sh' does not require any new ignore rules as it's a shell script file. The current .gitignore content remains unchanged
+node_modules
+node_modules/
