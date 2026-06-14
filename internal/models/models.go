@@ -34,6 +34,12 @@ type Track struct {
 	TauLast   time.Time `json:"tau_last"`
 }
 
+// HistoryEntry registra una reproducción completada.
+type HistoryEntry struct {
+	Track    Track     `json:"track"`
+	PlayedAt time.Time `json:"played_at"`
+}
+
 // EventType represents the type of action or event in the system.
 type EventType string
 

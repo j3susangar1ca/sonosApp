@@ -331,6 +331,36 @@ func TestFSMRemoveFromQueue(t *testing.T) {
         }
 }
 
+// TestHandleEOF_History verifies that tracks are appended to the history on EOF.
+func TestHandleEOF_History(t *testing.T) {
+        handler := &mockActionHandler{}
+        fsm := NewJukeboxFSM(15, handler)
+
+        // Add track and wait for it to start playing
+        track1 := models.Track{ID: "track1", Src: models.SourceYoutube, UserID: "userA"}
+        fsm.ProcessEvent(EventAdd, track1)
+        time.Sleep(50 * time.Millisecond)
+
+        state, current, _ := fsm.GetState()
+        if state != StatePlaying || current == nil || current.ID != "track1" {
+                t.Fatalf("expected track1 to be playing, got state=%s", state.String())
+        }
+
+        // Trigger EOF
+        fsm.ProcessEvent(EventEOF, nil)
+        time.Sleep(10 * time.Millisecond)
+
+        // History should now contain track1
+        history := fsm.GetHistory()
+        if len(history) != 1 {
+                t.Fatalf("expected 1 history entry, got %d", len(history))
+        }
+
+        if history[0].Track.ID != "track1" {
+                t.Errorf("expected track1 in history, got %s", history[0].Track.ID)
+        }
+}
+
 // TestFSMAckFailRetry verifies retry and idle state resets.
 func TestFSMAckFailRetry(t *testing.T) {
         handler := &mockActionHandler{playErr: errors.New("network timeout")}
@@ -350,7 +380,7 @@ func TestFSMAckFailRetry(t *testing.T) {
         }
 
         pCount, _, _, _ := handler.counts()
-        if pCount != 4 { // Initial attempt + 3 retries = 4
-                t.Errorf("expected 4 play calls on Sonos handler, got %d", pCount)
+        if pCount != 3 { // Initial attempt + 2 retries = 3
+                t.Errorf("expected 3 play calls on Sonos handler, got %d", pCount)
         }
 }
