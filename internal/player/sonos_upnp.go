@@ -10,10 +10,12 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jesuslangarica/sonosApp/internal/models"
+	"github.com/jesuslangarica/sonosApp/internal/streaming"
 	"github.com/jesuslangarica/sonosApp/internal/telemetry"
 )
 
@@ -66,7 +68,6 @@ func NewCircuitBreaker(maxFailures int64, coolDown time.Duration) *CircuitBreake
 }
 
 // CanExecute checks if the request is allowed to proceed.
-// If the cooldown timer has expired in Open state, transitions to HalfOpen.
 func (cb *CircuitBreaker) CanExecute() bool {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
@@ -127,21 +128,50 @@ type SonosPlayer struct {
 	port      int
 	client    *http.Client
 	cb        *CircuitBreaker
-	mu        sync.Mutex                      // Serializes SOAP actions on the player
-	backoffFn func(attempt int) time.Duration // Custom backoff function for test mockability
+	mu        sync.Mutex
+	backoffFn func(attempt int) time.Duration
+	proxy     *streaming.StreamingProxy // Streaming proxy for URL proxying
 }
 
-// NewSonosPlayer initializes a SonosPlayer.
-func NewSonosPlayer(speakerIP string, cb *CircuitBreaker) *SonosPlayer {
+// NewSonosPlayer initializes a SonosPlayer with streaming proxy support.
+func NewSonosPlayer(speakerIP string, cb *CircuitBreaker, proxy *streaming.StreamingProxy) *SonosPlayer {
 	return &SonosPlayer{
 		speakerIP: speakerIP,
 		port:      1400,
 		client:    &http.Client{Timeout: 5 * time.Second},
 		cb:        cb,
+		proxy:     proxy,
 	}
 }
 
+// escapeXMLString safely escapes a string for use inside an XML element.
+func escapeXMLString(s string) string {
+	var buf bytes.Buffer
+	_ = xml.EscapeText(&buf, []byte(s))
+	return buf.String()
+}
+
+// mimeToProtocolInfo converts a MIME type to a Sonos protocolInfo string.
+// Sonos requires the format: "http-get:*:mimeType:*"
+func mimeToProtocolInfo(mimeType string) string {
+	if mimeType == "" {
+		mimeType = "audio/mpeg"
+	}
+	return fmt.Sprintf("http-get:*:%s:*", mimeType)
+}
+
 // PlayTrack sets the URI, plays the track, and updates the volume.
+//
+// KEY FIX: Instead of sending the raw googlevideo.com URL directly to Sonos,
+// we proxy the stream through the server. This solves two critical problems:
+//
+//  1. IP Restriction: YouTube streaming URLs are bound to the server's IP.
+//     When Sonos (different IP) tries to access the URL, YouTube rejects it.
+//     By proxying through the server, all requests come from the server's IP.
+//
+//  2. DIDL-Lite XML Construction: The original code had unescaped & characters
+//     in URLs and titles within the DIDL-Lite metadata, creating malformed XML
+//     that Sonos rejects with HTTP 500.
 func (s *SonosPlayer) PlayTrack(track models.Track, volume int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -149,20 +179,55 @@ func (s *SonosPlayer) PlayTrack(track models.Track, volume int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// 1. Escapar la URL de streaming para el nodo principal <CurrentURI>
-	var urlBuf bytes.Buffer
-	_ = xml.EscapeText(&urlBuf, []byte(track.URL))
-	escapedURL := urlBuf.String()
+	// Determine the URI to send to Sonos
+	var sonosURI string
+	var protocolInfo string
 
-	// 2. Construir la estructura cruda de metadatos DIDL-Lite que exige Sonos
-	didlRaw := fmt.Sprintf(`<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="0" parentID="0" restricted="false"><dc:title>%s</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:audio/mp4:*">%s</res></item></DIDL-Lite>`, track.Meta.Title, track.URL)
+	if s.proxy != nil && strings.HasPrefix(track.URL, "http") {
+		// Proxy the remote URL through our server.
+		// Sonos will request from our server instead of googlevideo.com directly.
+		mimeType := track.MIMEType
+		if mimeType == "" {
+			mimeType = "audio/mpeg"
+		}
 
-	// 3. Escapar completamente el bloque de metadatos para encapsularlo de forma segura en XML
-	var didlBuf bytes.Buffer
-	_ = xml.EscapeText(&didlBuf, []byte(didlRaw))
-	escapedMetadata := didlBuf.String()
+		proxyURL, err := s.proxy.GenerateRemoteURL(track.URL, mimeType, track.Meta.Title, track.ID)
+		if err != nil {
+			slog.Error("Failed to generate proxy URL", "track_id", track.ID, "error", err)
+			// Fallback: try direct URL (likely to fail with IP-restricted URLs)
+			sonosURI = track.URL
+			protocolInfo = mimeToProtocolInfo(mimeType)
+		} else {
+			sonosURI = proxyURL
+			protocolInfo = mimeToProtocolInfo(mimeType)
+			slog.Info("Using proxy URL for Sonos playback", "track_id", track.ID, "original_url_len", len(track.URL), "proxy_url_len", len(proxyURL))
+		}
+	} else {
+		// No proxy available or non-HTTP URL, use direct URL
+		sonosURI = track.URL
+		protocolInfo = mimeToProtocolInfo(track.MIMEType)
+	}
 
-	// 4. Inyectar ambos valores en el cuerpo del sobre SOAP
+	// Escape the URI for XML
+	escapedURI := escapeXMLString(sonosURI)
+
+	// Build DIDL-Lite metadata with PROPERLY ESCAPED values.
+	// CRITICAL: Both the title and the URI inside <res> must be XML-escaped
+	// to avoid malformed XML that Sonos rejects with HTTP 500.
+	escapedTitle := escapeXMLString(track.Meta.Title)
+	escapedResURI := escapeXMLString(sonosURI)
+
+	didlRaw := fmt.Sprintf(
+		`<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="0" parentID="0" restricted="false"><dc:title>%s</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="%s">%s</res></item></DIDL-Lite>`,
+		escapedTitle,
+		protocolInfo,
+		escapedResURI,
+	)
+
+	// Escape the entire DIDL-Lite block for embedding inside the SOAP <CurrentURIMetaData> element
+	escapedMetadata := escapeXMLString(didlRaw)
+
+	// Build the SetAVTransportURI SOAP body
 	setURIBody := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
   <s:Body>
@@ -172,7 +237,9 @@ func (s *SonosPlayer) PlayTrack(track models.Track, volume int) error {
       <CurrentURIMetaData>%s</CurrentURIMetaData>
     </u:SetAVTransportURI>
   </s:Body>
-</s:Envelope>`, escapedURL, escapedMetadata)
+</s:Envelope>`, escapedURI, escapedMetadata)
+
+	slog.Info("Sending SetAVTransportURI to Sonos", "track_id", track.ID, "uri_len", len(escapedURI), "has_metadata", escapedMetadata != "")
 
 	err := s.callSOAP(ctx, "AVTransport", "SetAVTransportURI", setURIBody)
 	if err != nil {
@@ -312,6 +379,11 @@ func (s *SonosPlayer) postSOAPRaw(ctx context.Context, service string, action st
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
+		// Read the error response body for better diagnostics
+		bodyBytes := make([]byte, 1024)
+		n, _ := resp.Body.Read(bodyBytes)
+		errorDetail := string(bodyBytes[:n])
+		slog.Error("SOAP action failed with detailed error", "action", action, "status", resp.StatusCode, "response", errorDetail)
 		return fmt.Errorf("SOAP action %s failed: status code %d", action, resp.StatusCode)
 	}
 

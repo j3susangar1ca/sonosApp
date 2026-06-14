@@ -50,6 +50,17 @@ func ValidateURL(inputURL string) (string, error) {
 	return u.String(), nil
 }
 
+// extToMIME maps file extensions to MIME types for Sonos compatibility.
+var extToMIME = map[string]string{
+	"m4a":  "audio/mp4",
+	"mp3":  "audio/mpeg",
+	"webm": "audio/webm",
+	"ogg":  "audio/ogg",
+	"opus": "audio/ogg",
+	"flac": "audio/flac",
+	"wav":  "audio/wav",
+}
+
 // ResolveURL runs yt-dlp to retrieve metadata and stream URLs.
 // Enforces contextual execution and prevents shell injection.
 func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models.Track, error) {
@@ -58,7 +69,10 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 		return models.Track{}, err
 	}
 
-	// Direct execution without sh/bash shell wrapper to avoid command injection
+	// Use format selector that prioritizes Sonos-compatible formats:
+	// 1. m4a (AAC) - Sonos native support, best compatibility
+	// 2. mp3 - Universal Sonos support
+	// 3. Any best audio as fallback
 	cmd := execCommandContext(ctx, ytdlpPath, "-j", "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio", "--no-playlist", sanitizedURL)
 
 	var stdout, stderr bytes.Buffer
@@ -66,8 +80,6 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 	cmd.Stderr = &stderr
 
 	// Measure yt-dlp execution latency for telemetry observability.
-	// This captures the real wall-clock time of the OS process invocation,
-	// regardless of whether the caller uses the WorkerPool or calls ResolveURL directly.
 	startTime := time.Now()
 	defer func() {
 		telemetry.ObserveYoutubeLatency(time.Since(startTime).Seconds())
@@ -84,6 +96,9 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 		Duration  float64 `json:"duration"`
 		Thumbnail string  `json:"thumbnail"`
 		URL       string  `json:"url"`
+		Ext       string  `json:"ext"`
+		Acodec    string  `json:"acodec"`
+		FormatID  string  `json:"format_id"`
 	}
 
 	err = json.Unmarshal(stdout.Bytes(), &output)
@@ -95,6 +110,16 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 		return models.Track{}, errors.New("no streaming URL found in yt-dlp output")
 	}
 
+	// Determine MIME type from extension
+	mimeType := "audio/mpeg" // default
+	ext := output.Ext
+	if ext == "" {
+		ext = "m4a" // default fallback
+	}
+	if mt, ok := extToMIME[ext]; ok {
+		mimeType = mt
+	}
+
 	track := models.Track{
 		ID:     output.ID,
 		UserID: "", // Set by FSM caller on EventAdd
@@ -104,9 +129,13 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 			Thumbnail: output.Thumbnail,
 			Duration:  int(output.Duration),
 		},
-		URL: output.URL,
-		Dur: int(output.Duration),
+		URL:      output.URL,
+		Dur:      int(output.Duration),
+		MIMEType: mimeType,
+		Ext:      ext,
 	}
+
+	slog.Info("Track resolved", "track_id", output.ID, "ext", ext, "mime", mimeType, "format_id", output.FormatID, "acodec", output.Acodec)
 
 	return track, nil
 }
@@ -168,12 +197,14 @@ func (pq *PriorityQueue) Push(task *Task) {
 
 // Pop retrieves and removes the highest priority task from the queue.
 // It blocks until a task is available or the queue is stopped.
+// Uses the idiomatic sync.Cond.Wait() pattern to avoid the "unlock of unlocked mutex" panic
+// that occurred in the original implementation which launched cond.Wait() in a separate goroutine.
 func (pq *PriorityQueue) Pop(stopCh <-chan struct{}) (*Task, error) {
 	pq.mu.Lock()
 	defer pq.mu.Unlock()
 
 	for len(pq.tasks) == 0 && !pq.stopped {
-		// Verificación no bloqueante antes de dormir la goroutine
+		// Non-blocking check of stop channel before waiting
 		select {
 		case <-stopCh:
 			pq.stopped = true
@@ -181,10 +212,11 @@ func (pq *PriorityQueue) Pop(stopCh <-chan struct{}) (*Task, error) {
 		default:
 		}
 
-		// Patrón seguro: Wait libera el mutex, espera la señal y lo re-adquiere dinámicamente
+		// cond.Wait() atomically unlocks mu, waits for Signal/Broadcast,
+		// and re-locks mu before returning. This is the correct and safe usage pattern.
 		pq.cond.Wait()
 
-		// Verificación inmediata tras despertar
+		// Check stop channel again after waking up
 		select {
 		case <-stopCh:
 			pq.stopped = true

@@ -25,8 +25,10 @@ type Track struct {
 	UserID    string    `json:"user_id"` // User who added the track
 	Src       Source    `json:"src"`
 	Meta      Metadata  `json:"meta"`
-	URL       string    `json:"url"` // Resolved streaming URL, empty if not yet resolved
-	Dur       int       `json:"dur"` // Duration in seconds
+	URL       string    `json:"url"`       // Resolved streaming URL, empty if not yet resolved
+	Dur       int       `json:"dur"`       // Duration in seconds
+	MIMEType  string    `json:"mime_type"` // MIME type of the stream (e.g. "audio/mp4", "audio/mpeg")
+	Ext       string    `json:"ext"`       // File extension (e.g. "m4a", "mp3", "webm")
 	PlayCount int       `json:"play_count"`
 	SkipCount int       `json:"skip_count"`
 	TauLast   time.Time `json:"tau_last"`
@@ -94,4 +96,3 @@ type CalendarWebhookPayload struct {
 	Timestamp time.Time         `json:"timestamp"`
 	ZoneID    string            `json:"zone_id,omitempty"`
 }
-

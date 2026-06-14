@@ -56,7 +56,6 @@ func (f *zoneFlags) Set(value string) error {
 }
 
 // OrchestratorFSMObserver implements player.FSMObserver.
-// Each zone gets its own observer that emits broadcasts tagged with zone_id (§20.3).
 type OrchestratorFSMObserver struct {
 	zoneID    string
 	persister *persist.Persister
@@ -65,14 +64,12 @@ type OrchestratorFSMObserver struct {
 }
 
 func (o *OrchestratorFSMObserver) OnStateChange(oldState, newState player.State, currentTrack *models.Track, volume int) {
-	// 1. If transitioning from Transitioning to Playing, a song has successfully dequeued.
 	if oldState == player.StateTransitioning && newState == player.StatePlaying {
 		slog.Info("Track successfully dequeued, writing persistence record", "zone_id", o.zoneID)
 		_ = o.persister.WriteDelta(persist.OpDequeue, nil, o.fsm)
 		telemetry.IncrementPlayCount()
 	}
 
-	// 2. Broadcast Jukebox FSM state update to all active WebSocket connections (§20.3).
 	msg, err := json.Marshal(map[string]interface{}{
 		"event":         "state_change",
 		"zone_id":       o.zoneID,
@@ -87,10 +84,8 @@ func (o *OrchestratorFSMObserver) OnStateChange(oldState, newState player.State,
 }
 
 func (o *OrchestratorFSMObserver) OnVolumeChange(volume int) {
-	// 1. Write set volume operation to persistence log.
 	_ = o.persister.WriteDelta(persist.OpVolume, volume, o.fsm)
 
-	// 2. Broadcast volume change event to all WebSocket clients (§20.3).
 	msg, err := json.Marshal(map[string]interface{}{
 		"event":   "volume_change",
 		"zone_id": o.zoneID,
@@ -102,7 +97,6 @@ func (o *OrchestratorFSMObserver) OnVolumeChange(volume int) {
 }
 
 func main() {
-	// Define and parse CLI flags (also fallback to env vars)
 	portOpt := flag.String("port", getEnv("PORT", "8080"), "HTTP port to listen on")
 	baseDirOpt := flag.String("base-dir", getEnv("BASE_DIR", "."), "Base media directory for the secure streaming proxy")
 	serverURLOpt := flag.String("server-url", getEnv("SERVER_URL", "http://localhost:8080"), "Base URL of this server for streaming URLs")
@@ -112,28 +106,22 @@ func main() {
 	ytdlpPathOpt := flag.String("ytdlp-path", getEnv("YTDLP_PATH", "yt-dlp"), "Path to the yt-dlp executable")
 	calendarSecretOpt := flag.String("calendar-secret", getEnv("CALENDAR_WEBHOOK_SECRET", ""), "Shared secret for calendar webhook HMAC-SHA256 validation")
 
-	// Multi-zone flags: --zone default:192.168.1.10 --zone kitchen:192.168.1.11
-	// If no --zone flags are provided, a single "default" zone is created.
 	var zones zoneFlags
 	flag.Var(&zones, "zone", "Zone definition in the form 'id:ip' or 'id' (mock mode). Can be specified multiple times.")
 
-	// Legacy single-zone flag for backward compatibility
 	sonosIPOpt := flag.String("sonos-ip", getEnv("SONOS_IP", ""), "IP of the Sonos speaker (legacy, creates a 'default' zone)")
 
 	flag.Parse()
 
-	// Initialize Structured Logging in JSON format targeting stdout
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 	slog.SetDefault(logger)
 
-	// Resolve zone definitions: --zone flags take priority, then --sonos-ip legacy flag
 	var zoneDefs []zoneDef
 	if len(zones) > 0 {
 		zoneDefs = parseZoneDefs(zones)
 	} else {
-		// Legacy mode: single "default" zone
 		zoneDefs = []zoneDef{{ID: "default", IP: *sonosIPOpt}}
 	}
 
@@ -144,7 +132,10 @@ func main() {
 		"ytdlpPath", *ytdlpPathOpt,
 	)
 
-	// 1. Initialize Streaming Proxy & LRU Cache (shared singletons — §20.1)
+	// 1. Initialize Streaming Proxy & LRU Cache (shared singletons)
+	// KEY: The streaming proxy now supports remote URL proxying.
+	// When -server-url is set correctly (e.g. http://192.168.1.67:8080),
+	// Sonos will be able to access YouTube streams through this server.
 	proxy, err := streaming.NewStreamingProxy(*baseDirOpt, *serverURLOpt)
 	if err != nil {
 		slog.Error("Failed to initialize Streaming Proxy", "error", err)
@@ -153,27 +144,29 @@ func main() {
 
 	lruCache := cache.NewLRUCache(100)
 
-	// 2. Initialize EventBus & WorkerPool (shared singletons — §20.1)
+	// 2. Initialize EventBus & WorkerPool (shared singletons)
 	eb := eventbus.NewEventBus(128, 10*time.Second)
 	pool := extractor.NewWorkerPool(*ytdlpPathOpt)
 
-	// 3. Initialize ZoneRegistry (§20)
+	// 3. Initialize ZoneRegistry
 	registry := api.NewZoneRegistry()
 
-	// 4. Initialize each zone with independent FSM, CB, Sonos adapter, and Persister (§20.2)
+	// 4. Initialize each zone with independent FSM, CB, Sonos adapter, and Persister
+	// KEY FIX: Pass the streaming proxy to SonosPlayer so it can generate proxy URLs
+	// for remote streams (googlevideo.com). This solves the IP-restriction problem.
 	for _, zd := range zoneDefs {
 		var actionHandler player.ActionHandler
 		if zd.IP != "" {
 			cb := player.NewCircuitBreaker(3, 15*time.Second)
-			actionHandler = player.NewSonosPlayer(zd.IP, cb)
-			slog.Info("Initialized hardware SonosPlayer for zone", "zone_id", zd.ID, "ip", zd.IP)
+			// NEW: Pass proxy to SonosPlayer so it can proxy remote URLs
+			actionHandler = player.NewSonosPlayer(zd.IP, cb, proxy)
+			slog.Info("Initialized hardware SonosPlayer for zone", "zone_id", zd.ID, "ip", zd.IP, "proxy_enabled", true)
 		} else {
 			slog.Info("Zone running in mock mode (FSM auto-acks transitions)", "zone_id", zd.ID)
 		}
 
 		fsm := player.NewJukeboxFSM(15, actionHandler)
 
-		// Per-zone persistence files
 		logPath := *stateLogOpt
 		snapPath := *stateJsonOpt
 		if len(zoneDefs) > 1 || zd.ID != "default" {
@@ -193,7 +186,7 @@ func main() {
 		registry.Register(zone)
 	}
 
-	// 5. Wire telemetry dynamic Gauge callbacks — aggregated across all zones
+	// 5. Wire telemetry dynamic Gauge callbacks
 	telemetry.QueueSizeFunc = func() float64 {
 		var total int
 		registry.ForEach(func(zone *api.Zone) {
@@ -202,8 +195,6 @@ func main() {
 		return float64(total)
 	}
 	telemetry.ActiveUsersFunc = func() float64 {
-		// Users are global (shared across zones — §20.1), so we read from the default zone.
-		// In practice, all zones share the same user set via the Hub.
 		if z, ok := registry.GetDefault(); ok {
 			return float64(len(z.FSM.GetActiveUsers()))
 		}
@@ -211,8 +202,7 @@ func main() {
 	}
 	telemetry.RegisterGaugeFuncs()
 
-	// 6. Initialize WebSocket Hub — uses the default zone's FSM for user management.
-	// Users are global across zones (§20.1: Ua is not vectorized).
+	// 6. Initialize WebSocket Hub
 	defaultZone, hasDefault := registry.GetDefault()
 	if !hasDefault {
 		slog.Error("No 'default' zone configured. At least one zone must be 'default'.")
@@ -231,7 +221,7 @@ func main() {
 		zone.FSM.RegisterObserver(observer)
 	})
 
-	// 8. RESTORE FSM State BEFORE listening to network requests (Synchronous Restore per zone)
+	// 8. RESTORE FSM State BEFORE listening to network requests
 	slog.Info("Restoring Jukebox state from storage files...")
 	registry.ForEach(func(zone *api.Zone) {
 		if err := zone.Persister.Restore(zone.FSM); err != nil {
@@ -270,19 +260,16 @@ func main() {
 
 	slog.Info("Shutdown signal received; initiating graceful termination...")
 
-	// Shutdown HTTP Server first to reject incoming requests immediately
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("HTTP Server shutdown error", "error", err)
 	}
 
-	// Terminate concurrent background workers
 	hub.Stop()
 	eb.Stop()
 	pool.Stop()
 
-	// Write final state snapshot per zone to disk to prevent any loss of queue/state
 	slog.Info("Saving final state snapshots to disk...")
 	registry.ForEach(func(zone *api.Zone) {
 		finalSnap := zone.FSM.ExportSnapshot()
@@ -322,7 +309,7 @@ func subscribeEventBusWorkers(
 				continue
 			}
 
-			// 1. Try to resolve URL from cache first to avoid heavy yt-dlp invocations
+			// 1. Try to resolve URL from cache first
 			if cachedTrack, found := lruCache.Get(payload.URL); found {
 				slog.Info("LRU Cache hit: serving resolved track from cache", "url", payload.URL, "track_id", cachedTrack.ID, "zone_id", zoneID)
 				cachedTrack.UserID = payload.UserID
@@ -333,9 +320,12 @@ func subscribeEventBusWorkers(
 				continue
 			}
 
-			// 2. Fallback: Submit extraction task to WorkerPool (shared singleton)
-			resChan := pool.Submit(payload.URL, 2) // Priority 2 represents a user requested song
-			
+			// 2. Fallback: Submit extraction task to WorkerPool
+			resChan := pool.Submit(payload.URL, 2)
+
+			// KEY FIX: Ack AFTER the async resolution completes, not before.
+			// This prevents the EventBus from retransmitting duplicate add_track events
+			// while yt-dlp is still resolving the URL.
 			go func(rChan <-chan extractor.Result, envelopeID string, userID string, rawURL string, z *api.Zone, zID string) {
 				res := <-rChan
 				if res.Err != nil {
@@ -344,10 +334,8 @@ func subscribeEventBusWorkers(
 					track := res.Track
 					track.UserID = userID
 
-					// Save resolved track in LRU cache (shared singleton)
 					lruCache.Add(rawURL, track)
 
-					// Append resolved track to per-zone Jukebox queue
 					z.FSM.ProcessEvent(player.EventAdd, track)
 					_ = z.Persister.WriteDelta(persist.OpAppend, track, z.FSM)
 				}
@@ -404,7 +392,6 @@ func subscribeEventBusWorkers(
 
 			slog.Info("Processing set volume command", "level", payload.Level, "zone_id", zoneID)
 			zone.FSM.ProcessEvent(player.EventSetVolume, payload.Level)
-			// Volume change is logged as a delta via OnVolumeChange observer hook.
 			eb.Ack(env.ID, "orchestrator_vol")
 		}
 	}()
