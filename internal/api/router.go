@@ -30,7 +30,6 @@ var upgrader = websocket.Upgrader{
 const maxWebhookBodySize = 4096
 
 // NewRouter configures the perimeter HTTP endpoints using Go 1.22+ native ServeMux routing capabilities.
-// §20: Accepts a ZoneRegistry instead of a single FSM to support multiple independent audio zones.
 func NewRouter(
 	registry *ZoneRegistry,
 	eb *eventbus.EventBus,
@@ -42,18 +41,21 @@ func NewRouter(
 
 	// API endpoints — all zone-aware with fallback to "default"
 	mux.HandleFunc("POST /api/tracks", handleAddTrack(eb))
+	mux.HandleFunc("POST /api/tracks/play-now", handlePlayNow(eb))
 	mux.HandleFunc("POST /api/skip", handleSkip(eb))
 	mux.HandleFunc("POST /api/volume", handleSetVolume(eb))
 	mux.HandleFunc("POST /api/clear", handleClearQueue(eb))
 	mux.HandleFunc("POST /api/pause", handlePause(eb))
 	mux.HandleFunc("POST /api/resume", handleResume(eb))
+	mux.HandleFunc("POST /api/queue/play", handlePlayFromQueue(eb))
+	mux.HandleFunc("POST /api/queue/remove", handleRemoveFromQueue(eb))
 	mux.HandleFunc("GET /api/queue", handleGetQueue(registry))
 	mux.HandleFunc("GET /api/users", handleGetUsers(registry))
 	mux.HandleFunc("GET /api/zones", handleGetZones(registry))
 	mux.HandleFunc("GET /api/ws", handleWebSocket(hub))
 	mux.Handle("GET /metrics", telemetry.Handler())
 
-	// Calendar Webhook endpoint (§15) — HMAC-SHA256 secured
+	// Calendar Webhook endpoint — HMAC-SHA256 secured
 	mux.HandleFunc("POST /api/webhooks/calendar", handleCalendarWebhook(eb, webhookSecret))
 
 	// Local file streaming proxy mount
@@ -105,19 +107,127 @@ func handleAddTrack(eb *eventbus.EventBus) http.HandlerFunc {
 	}
 }
 
-func handleSkip(eb *eventbus.EventBus) http.HandlerFunc {
+// handlePlayNow adds a track and immediately plays it (skips current).
+func handlePlayNow(eb *eventbus.EventBus) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			URL    string `json:"url"`
 			UserID string `json:"user_id"`
 			ZoneID string `json:"zone_id,omitempty"`
 		}
 
-		// Body is optional for skips
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.URL == "" || req.UserID == "" {
+			http.Error(w, "missing required fields: url and user_id", http.StatusBadRequest)
+			return
+		}
+
+		cmd := models.Command{
+			Type: models.ActionPlayNow,
+			Payload: models.PlayNowPayload{
+				URL:       req.URL,
+				UserID:    req.UserID,
+				Timestamp: time.Now(),
+				ZoneID:    ResolveZoneID(req.ZoneID),
+			},
+			ZoneID: ResolveZoneID(req.ZoneID),
+		}
+
+		eb.Inject(cmd)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+// handlePlayFromQueue plays a specific track from the queue by moving it to front.
+func handlePlayFromQueue(eb *eventbus.EventBus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TrackID string `json:"track_id"`
+			UserID  string `json:"user_id"`
+			ZoneID  string `json:"zone_id,omitempty"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.TrackID == "" {
+			http.Error(w, "missing required field: track_id", http.StatusBadRequest)
+			return
+		}
+
+		cmd := models.Command{
+			Type: models.ActionPlayFromQueue,
+			Payload: models.PlayFromQueuePayload{
+				TrackID: req.TrackID,
+				UserID:  req.UserID,
+				ZoneID:  ResolveZoneID(req.ZoneID),
+			},
+			ZoneID: ResolveZoneID(req.ZoneID),
+		}
+
+		eb.Inject(cmd)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+// handleRemoveFromQueue removes a specific track from the queue.
+func handleRemoveFromQueue(eb *eventbus.EventBus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			TrackID string `json:"track_id"`
+			ZoneID  string `json:"zone_id,omitempty"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		if req.TrackID == "" {
+			http.Error(w, "missing required field: track_id", http.StatusBadRequest)
+			return
+		}
+
+		cmd := models.Command{
+			Type: models.ActionRemoveFromQueue,
+			Payload: models.RemoveFromQueuePayload{
+				TrackID: req.TrackID,
+				ZoneID:  ResolveZoneID(req.ZoneID),
+			},
+			ZoneID: ResolveZoneID(req.ZoneID),
+		}
+
+		eb.Inject(cmd)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+	}
+}
+
+func handleSkip(eb *eventbus.EventBus) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			ZoneID string `json:"zone_id,omitempty"`
+		}
+
 		_ = json.NewDecoder(r.Body).Decode(&req)
 
 		cmd := models.Command{
 			Type:    models.ActionSkip,
-			Payload: req.UserID,
+			Payload: nil,
 			ZoneID:  ResolveZoneID(req.ZoneID),
 		}
 
@@ -247,7 +357,7 @@ func handleGetQueue(registry *ZoneRegistry) http.HandlerFunc {
 	}
 }
 
-// handleGetUsers returns the active users and votes for a specific zone (query param: zone_id).
+// handleGetUsers returns the active users for a specific zone (query param: zone_id).
 func handleGetUsers(registry *ZoneRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		zoneID := ResolveZoneID(r.URL.Query().Get("zone_id"))
@@ -258,19 +368,15 @@ func handleGetUsers(registry *ZoneRegistry) http.HandlerFunc {
 		}
 
 		users := zone.FSM.GetActiveUsers()
-		votes := zone.FSM.GetVotes()
-		karma := zone.FSM.GetKarma()
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"users": users,
-			"votes": votes,
-			"karma": karma,
 		})
 	}
 }
 
-// handleGetZones returns all registered zones with their current state (§20).
+// handleGetZones returns all registered zones with their current state.
 func handleGetZones(registry *ZoneRegistry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		zones := registry.All()
@@ -319,19 +425,15 @@ func handleWebSocket(hub *ws.WebSocketHub) http.HandlerFunc {
 	}
 }
 
-// handleCalendarWebhook implements the POST /api/webhooks/calendar endpoint (§15).
-// Security: HMAC-SHA256 validation with constant-time comparison.
-// Invariant: CalendarWebhook(event) = Inject(E_temporal(event), CH_in)
+// handleCalendarWebhook implements the POST /api/webhooks/calendar endpoint.
 func handleCalendarWebhook(eb *eventbus.EventBus, secret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Guard: reject requests if no secret is configured
 		if secret == "" {
 			slog.Warn("Calendar webhook called but no secret is configured")
 			http.Error(w, "webhook not configured", http.StatusServiceUnavailable)
 			return
 		}
 
-		// Limit body size to mitigate DoS (§ISO 27001 — input sanitization)
 		r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBodySize)
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -340,7 +442,6 @@ func handleCalendarWebhook(eb *eventbus.EventBus, secret string) http.HandlerFun
 			return
 		}
 
-		// Validate HMAC-SHA256 signature (constant-time comparison)
 		signature := r.Header.Get("X-Webhook-Signature")
 		if signature == "" {
 			slog.Warn("Calendar webhook received without signature header",
@@ -357,14 +458,12 @@ func handleCalendarWebhook(eb *eventbus.EventBus, secret string) http.HandlerFun
 			return
 		}
 
-		// Deserialize payload
 		var payload models.CalendarWebhookPayload
 		if err := json.Unmarshal(body, &payload); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
 		}
 
-		// Map calendar event to FSM action (§15.2)
 		var actionType models.EventType
 		switch payload.EventType {
 		case models.CalendarMeetingStart:
@@ -384,7 +483,6 @@ func handleCalendarWebhook(eb *eventbus.EventBus, secret string) http.HandlerFun
 			return
 		}
 
-		// Inject into EventBus — processed by existing Pause/Resume workers
 		cmd := models.Command{
 			Type:    actionType,
 			Payload: nil,

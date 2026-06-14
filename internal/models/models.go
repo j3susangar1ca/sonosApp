@@ -38,13 +38,16 @@ type Track struct {
 type EventType string
 
 const (
-	ActionAddTrack   EventType = "add_track"
-	ActionPlay       EventType = "play"
-	ActionPause      EventType = "pause"
-	ActionResume     EventType = "resume"
-	ActionSkip       EventType = "skip"
-	ActionSetVolume  EventType = "set_volume"
-	ActionClearQueue EventType = "clear_queue"
+	ActionAddTrack      EventType = "add_track"
+	ActionPlayNow       EventType = "play_now"
+	ActionPlayFromQueue EventType = "play_from_queue"
+	ActionPlay          EventType = "play"
+	ActionPause         EventType = "pause"
+	ActionResume        EventType = "resume"
+	ActionSkip          EventType = "skip"
+	ActionSetVolume     EventType = "set_volume"
+	ActionClearQueue    EventType = "clear_queue"
+	ActionRemoveFromQueue EventType = "remove_from_queue"
 )
 
 // AddTrackPayload contains parameters for ActionAddTrack.
@@ -53,6 +56,27 @@ type AddTrackPayload struct {
 	UserID    string    `json:"user_id"`
 	Timestamp time.Time `json:"timestamp"`
 	ZoneID    string    `json:"zone_id,omitempty"`
+}
+
+// PlayNowPayload contains parameters for ActionPlayNow (play immediately).
+type PlayNowPayload struct {
+	URL       string    `json:"url"`
+	UserID    string    `json:"user_id"`
+	Timestamp time.Time `json:"timestamp"`
+	ZoneID    string    `json:"zone_id,omitempty"`
+}
+
+// PlayFromQueuePayload contains parameters for ActionPlayFromQueue.
+type PlayFromQueuePayload struct {
+	TrackID   string `json:"track_id"`
+	UserID    string `json:"user_id"`
+	ZoneID    string `json:"zone_id,omitempty"`
+}
+
+// RemoveFromQueuePayload contains parameters for ActionRemoveFromQueue.
+type RemoveFromQueuePayload struct {
+	TrackID string `json:"track_id"`
+	ZoneID  string `json:"zone_id,omitempty"`
 }
 
 // SetVolumePayload contains parameters for ActionSetVolume.
