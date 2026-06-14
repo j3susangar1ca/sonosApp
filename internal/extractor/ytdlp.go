@@ -59,7 +59,7 @@ func ResolveURL(ctx context.Context, ytdlpPath string, targetURL string) (models
 	}
 
 	// Direct execution without sh/bash shell wrapper to avoid command injection
-	cmd := execCommandContext(ctx, ytdlpPath, "-j", "-f", "bestaudio/best", "--no-playlist", sanitizedURL)
+	cmd := execCommandContext(ctx, ytdlpPath, "-j", "-f", "bestaudio[ext=m4a]/bestaudio[ext=mp3]/bestaudio", "--no-playlist", sanitizedURL)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -173,18 +173,13 @@ func (pq *PriorityQueue) Pop(stopCh <-chan struct{}) (*Task, error) {
 	defer pq.mu.Unlock()
 
 	for len(pq.tasks) == 0 && !pq.stopped {
-		done := make(chan struct{})
-		go func() {
-			pq.cond.Wait()
-			close(done)
-		}()
 		select {
 		case <-stopCh:
 			pq.stopped = true
 			pq.cond.Broadcast()
 			return nil, errors.New("queue stopped")
-		case <-done:
-			// Continue loop to check if we have tasks or stopped
+		default:
+			pq.cond.Wait()
 		}
 	}
 
