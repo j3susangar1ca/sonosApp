@@ -396,7 +396,7 @@ func handleGetZones(registry *ZoneRegistry) http.HandlerFunc {
 				SonosIP:  z.SonosIP,
 				State:    state.String(),
 				Volume:   vol,
-				QueueLen: len(z.FSM.GetQueue()),
+				QueueLen: z.FSM.QueueSize(),
 			})
 		}
 
