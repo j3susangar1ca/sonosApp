@@ -149,22 +149,30 @@ func (s *SonosPlayer) PlayTrack(track models.Track, volume int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	// Escape special characters in streaming URLs for XML context
-	// Only escape &, <, > which are problematic in XML, not the entire URL
+	// 1. Escapar la URL de streaming para el nodo principal <CurrentURI>
 	var urlBuf bytes.Buffer
 	_ = xml.EscapeText(&urlBuf, []byte(track.URL))
 	escapedURL := urlBuf.String()
 
+	// 2. Construir la estructura cruda de metadatos DIDL-Lite que exige Sonos
+	didlRaw := fmt.Sprintf(`<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="0" parentID="0" restricted="false"><dc:title>%s</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><res protocolInfo="http-get:*:audio/mp4:*">%s</res></item></DIDL-Lite>`, track.Meta.Title, track.URL)
+
+	// 3. Escapar completamente el bloque de metadatos para encapsularlo de forma segura en XML
+	var didlBuf bytes.Buffer
+	_ = xml.EscapeText(&didlBuf, []byte(didlRaw))
+	escapedMetadata := didlBuf.String()
+
+	// 4. Inyectar ambos valores en el cuerpo del sobre SOAP
 	setURIBody := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
   <s:Body>
     <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
       <InstanceID>0</InstanceID>
       <CurrentURI>%s</CurrentURI>
-      <CurrentURIMetaData></CurrentURIMetaData>
+      <CurrentURIMetaData>%s</CurrentURIMetaData>
     </u:SetAVTransportURI>
   </s:Body>
-</s:Envelope>`, escapedURL)
+</s:Envelope>`, escapedURL, escapedMetadata)
 
 	err := s.callSOAP(ctx, "AVTransport", "SetAVTransportURI", setURIBody)
 	if err != nil {
