@@ -173,13 +173,23 @@ func (pq *PriorityQueue) Pop(stopCh <-chan struct{}) (*Task, error) {
 	defer pq.mu.Unlock()
 
 	for len(pq.tasks) == 0 && !pq.stopped {
+		// Verificación no bloqueante antes de dormir la goroutine
 		select {
 		case <-stopCh:
 			pq.stopped = true
-			pq.cond.Broadcast()
 			return nil, errors.New("queue stopped")
 		default:
-			pq.cond.Wait()
+		}
+
+		// Patrón seguro: Wait libera el mutex, espera la señal y lo re-adquiere dinámicamente
+		pq.cond.Wait()
+
+		// Verificación inmediata tras despertar
+		select {
+		case <-stopCh:
+			pq.stopped = true
+			return nil, errors.New("queue stopped")
+		default:
 		}
 	}
 
