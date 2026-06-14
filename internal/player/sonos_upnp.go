@@ -151,7 +151,9 @@ func (s *SonosPlayer) PlayTrack(track models.Track, volume int) error {
 
 	// Escape special characters in streaming URLs for XML context
 	// Only escape &, <, > which are problematic in XML, not the entire URL
-	escapedURL := xml.EscapeString(track.URL)
+	var urlBuf bytes.Buffer
+	_ = xml.EscapeText(&urlBuf, []byte(track.URL))
+	escapedURL := urlBuf.String()
 
 	setURIBody := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
