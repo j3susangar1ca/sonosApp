@@ -97,6 +97,7 @@ type JukeboxFSM struct {
         activeUsers   map[string]bool
         retryCount    int
         maxRetries    int
+        history       []models.HistoryEntry
         // Deferred command buffer for events during Transitioning
         deferredCmds []deferredCmd
 }
@@ -108,11 +109,12 @@ type deferredCmd struct {
 
 // JukeboxStateSnapshot is the serializable form of the FSM for persistence.
 type JukeboxStateSnapshot struct {
-        State        State         `json:"state"`
-        Queue        []models.Track `json:"queue"`
-        CurrentTrack *models.Track `json:"current_track"`
-        Volume       int           `json:"volume"`
-        ActiveUsers  []string      `json:"active_users"`
+        State        State                 `json:"state"`
+        Queue        []models.Track        `json:"queue"`
+        CurrentTrack *models.Track         `json:"current_track"`
+        Volume       int                   `json:"volume"`
+        ActiveUsers  []string              `json:"active_users"`
+        History      []models.HistoryEntry `json:"history"`
 }
 
 // NewJukeboxFSM creates a new FSM with the given initial volume and action handler.
@@ -124,6 +126,7 @@ func NewJukeboxFSM(initialVolume int, handler ActionHandler) *JukeboxFSM {
                 actionHandler: handler,
                 activeUsers:   make(map[string]bool),
                 maxRetries:    3,
+                history:       make([]models.HistoryEntry, 0),
         }
 }
 
@@ -391,6 +394,16 @@ func (f *JukeboxFSM) handleEOF() {
                 return
         }
 
+        if f.currentTrack != nil {
+                f.history = append(f.history, models.HistoryEntry{
+                        Track:    *f.currentTrack,
+                        PlayedAt: time.Now(),
+                })
+                if len(f.history) > 100 {
+                        f.history = f.history[1:]
+                }
+        }
+
         f.currentTrack = nil
 
         if f.queue.Size() > 0 {
@@ -398,6 +411,15 @@ func (f *JukeboxFSM) handleEOF() {
         } else {
                 f.transitionState(StateIdle)
         }
+}
+
+// GetHistory returns a copy of the playback history.
+func (f *JukeboxFSM) GetHistory() []models.HistoryEntry {
+        f.mu.Lock()
+        defer f.mu.Unlock()
+        hist := make([]models.HistoryEntry, len(f.history))
+        copy(hist, f.history)
+        return hist
 }
 
 // handleClear clears the entire queue and stops playback.
@@ -606,6 +628,7 @@ func (f *JukeboxFSM) ExportSnapshot() JukeboxStateSnapshot {
                 CurrentTrack: f.currentTrack,
                 Volume:       f.volume,
                 ActiveUsers:  users,
+                History:      f.history,
         }
 }
 
@@ -625,6 +648,11 @@ func (f *JukeboxFSM) ImportSnapshot(snap JukeboxStateSnapshot) {
         for _, u := range snap.ActiveUsers {
                 f.activeUsers[u] = true
         }
+        if snap.History != nil {
+                f.history = snap.History
+        } else {
+                f.history = make([]models.HistoryEntry, 0)
+        }
 }
 
 // ApplyDelta applies a single delta operation to the FSM.
@@ -637,7 +665,10 @@ func (f *JukeboxFSM) ApplyDelta(op string, data json.RawMessage) error {
                 }
                 f.queue.Enqueue(track)
         case "dequeue":
-                _, _ = f.queue.Dequeue()
+                track, err := f.queue.Dequeue()
+                if err == nil {
+                        f.currentTrack = &track
+                }
         case "skip":
                 // No-op: skip is transient
         case "volume":

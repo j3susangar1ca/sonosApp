@@ -50,6 +50,7 @@ func NewRouter(
 	mux.HandleFunc("POST /api/queue/play", handlePlayFromQueue(eb))
 	mux.HandleFunc("POST /api/queue/remove", handleRemoveFromQueue(eb))
 	mux.HandleFunc("GET /api/queue", handleGetQueue(registry))
+	mux.HandleFunc("GET /api/history", handleGetHistory(registry))
 	mux.HandleFunc("GET /api/users", handleGetUsers(registry))
 	mux.HandleFunc("GET /api/zones", handleGetZones(registry))
 	mux.HandleFunc("GET /api/ws", handleWebSocket(hub))
@@ -354,6 +355,25 @@ func handleGetQueue(registry *ZoneRegistry) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(queue)
+	}
+}
+
+// handleGetHistory returns the history for a specific zone (query param: zone_id).
+func handleGetHistory(registry *ZoneRegistry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zoneID := ResolveZoneID(r.URL.Query().Get("zone_id"))
+		zone, ok := registry.Get(zoneID)
+		if !ok {
+			http.Error(w, "zone not found", http.StatusNotFound)
+			return
+		}
+
+		history := zone.FSM.GetHistory()
+		if history == nil {
+			history = make([]models.HistoryEntry, 0)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(history)
 	}
 }
 
