@@ -154,7 +154,7 @@ func main() {
 	lruCache := cache.NewLRUCache(100)
 
 	// 2. Initialize EventBus & WorkerPool (shared singletons — §20.1)
-	eb := eventbus.NewEventBus(128, 500*time.Millisecond)
+	eb := eventbus.NewEventBus(128, 10*time.Second)
 	pool := extractor.NewWorkerPool(*ytdlpPathOpt)
 
 	// 3. Initialize ZoneRegistry (§20)
@@ -335,7 +335,11 @@ func subscribeEventBusWorkers(
 
 			// 2. Fallback: Submit extraction task to WorkerPool (shared singleton)
 			resChan := pool.Submit(payload.URL, 2) // Priority 2 represents a user requested song
-			go func(rChan <-chan extractor.Result, envelopeID string, userID string, rawURL string, z *api.Zone, zID string) {
+			
+			// Ack immediately before starting the long-running task to prevent retransmissions
+			eb.Ack(env.ID, "orchestrator_add")
+			
+			go func(rChan <-chan extractor.Result, userID string, rawURL string, z *api.Zone, zID string) {
 				res := <-rChan
 				if res.Err != nil {
 					slog.Error("Failed to extract streaming URL", "url", rawURL, "zone_id", zID, "error", res.Err)
@@ -350,8 +354,7 @@ func subscribeEventBusWorkers(
 					z.FSM.ProcessEvent(player.EventAdd, track)
 					_ = z.Persister.WriteDelta(persist.OpAppend, track, z.FSM)
 				}
-				eb.Ack(envelopeID, "orchestrator_add")
-			}(resChan, env.ID, payload.UserID, payload.URL, zone, zoneID)
+			}(resChan, payload.UserID, payload.URL, zone, zoneID)
 		}
 	}()
 
