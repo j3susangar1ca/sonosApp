@@ -37,14 +37,35 @@ func TestValidateURL(t *testing.T) {
                 input   string
                 allowed bool
         }{
+                // Valid cases
                 {"https://youtube.com/watch?v=123", true},
                 {"https://www.youtube.com/watch?v=123", true},
                 {"https://youtu.be/123", true},
                 {"https://music.youtube.com/watch?v=123", true},
+                {"https://youtube.com:443/watch?v=123", true},
+                {"http://youtube.com/watch?v=123", true},
+
+                // Invalid domains
                 {"https://malicious.com/watch?v=123", false},
                 {"http://youtube.com.attacker.com/watch?v=123", false},
+                {"https://attacker-youtube.com/watch?v=123", false},
+                {"https://youtube.com.br/watch?v=123", false},
+                {"https://sub.music.youtube.com/watch?v=123", false}, // only exact allowedDomains
+
+                // Invalid schemes
                 {"ftp://youtube.com/watch?v=123", false},
-                {"https://youtube.com:443/watch?v=123", true},
+                {"file:///etc/passwd", false},
+                {"javascript:alert(1)", false},
+                {"", false}, // missing scheme
+
+                // Edge cases in formatting / parsing
+                {"youtube.com/watch?v=123", false}, // no scheme, parsed as path
+                {"https://user:pass@youtube.com", true}, // credentials allowed by url.Parse, hostname is youtube.com
+                {"https://youtube.com:invalidport/watch?v=123", false}, // url.Parse will fail or Hostname extraction will fail? Actually url.Parse might fail.
+                {"https://youtube.com%2F@attacker.com/watch", false},
+                {"https://youtube.com%00@attacker.com/watch", false},
+                {"://youtube.com", false}, // malformed URL
+                {"http://\nyoutube.com", false}, // control character
         }
 
         for _, tc := range tests {
