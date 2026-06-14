@@ -557,6 +557,13 @@ func (f *JukeboxFSM) GetQueue() []models.Track {
         return f.queue.All()
 }
 
+// QueueSize returns the current number of tracks in the queue.
+func (f *JukeboxFSM) QueueSize() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.queue.Size()
+}
+
 // GetActiveUsers returns a map of active user IDs.
 func (f *JukeboxFSM) GetActiveUsers() map[string]bool {
         f.mu.Lock()

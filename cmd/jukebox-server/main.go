@@ -184,7 +184,7 @@ func main() {
 	telemetry.QueueSizeFunc = func() float64 {
 		var total int
 		registry.ForEach(func(zone *api.Zone) {
-			total += len(zone.FSM.GetQueue())
+			total += zone.FSM.QueueSize()
 		})
 		return float64(total)
 	}

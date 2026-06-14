@@ -27,7 +27,7 @@ func setupTestRouter(t *testing.T, webhookSecret string) (*ZoneRegistry, *eventb
 
 	fsm := player.NewJukeboxFSM(15, nil)
 	telemetry.QueueSizeFunc = func() float64 {
-		return float64(len(fsm.GetQueue()))
+		return float64(fsm.QueueSize())
 	}
 	telemetry.ActiveUsersFunc = func() float64 {
 		return float64(len(fsm.GetActiveUsers()))
