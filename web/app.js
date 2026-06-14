@@ -54,7 +54,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     await loadZonesFromServer();
 
-    if (savedZone && document.querySelector(`#zone-selector option[value="${savedZone}"]`)) {
+    if (savedZone && zoneSelector.querySelector(`option[value="${savedZone}"]`)) {
         currentZone = savedZone;
         zoneSelector.value = currentZone;
     }
